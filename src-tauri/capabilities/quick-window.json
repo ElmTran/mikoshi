@@ -11,6 +11,7 @@
     "allow-vault-status",
     "allow-unlock",
     "allow-search-entries",
+    "allow-get-custom-icons",
     "allow-copy-field",
     "allow-hide-quick-search"
   ]

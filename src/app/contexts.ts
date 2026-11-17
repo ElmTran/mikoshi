@@ -33,3 +33,8 @@ export interface ToastOptions {
 export const ToastContext = createContext<(t: ToastOptions) => void>(() => {});
 
 export const useToast = () => useContext(ToastContext);
+
+/** Custom icons of the unlocked database: id → data URL. Empty while locked. */
+export const CustomIconsContext = createContext<ReadonlyMap<string, string>>(new Map());
+
+export const useCustomIcons = () => useContext(CustomIconsContext);

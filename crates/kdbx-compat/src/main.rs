@@ -778,39 +778,42 @@ fn totp_vs_kxc(kxc: &Kxc, path: &Path, key: &Key, db: &Database, sec: &mut Secti
                 continue;
             }
         };
-        // retry once in case the code rolled over between the two reads
-        let mut matched = false;
-        let mut last = String::new();
-        let mut theirs_code = String::new();
-        let mut mine = String::new();
-        for _ in 0..2 {
-            let theirs = kxc
-                .totp(path, key, cli)
-                .unwrap_or_else(|e| format!("error: {e}"));
-            let now = std::time::SystemTime::now()
+        // keepassxc-cli takes a moment (it opens the database), so its code
+        // belongs to some instant between `before` and `after`. Compare with
+        // our codes for both ends: a 30 s boundary may fall inside the call.
+        let unix_now = || {
+            std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
-                .unwrap_or(0);
-            mine = ours.value_at(now).code;
-            theirs_code = theirs
-                .lines()
-                .last()
-                .map(str::trim)
-                .unwrap_or("")
-                .to_string();
-            if theirs_code == mine {
-                matched = true;
-                break;
-            }
-            last = format!("keepass-rs {mine}, KeePassXC {theirs_code}");
-        }
+                .unwrap_or(0)
+        };
+        let before = unix_now();
+        let theirs = kxc
+            .totp(path, key, cli)
+            .unwrap_or_else(|e| format!("error: {e}"));
+        let after = unix_now();
+        let theirs_code = theirs
+            .lines()
+            .last()
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string();
+        let mut mine: Vec<String> = [before, after]
+            .iter()
+            .map(|&t| ours.value_at(t).code)
+            .collect();
+        mine.dedup();
         checked += 1;
-        if !matched {
-            let line = format!("TOTP of \"{cli}\" differs: {last}");
+        if !mine.contains(&theirs_code) {
+            let line = format!(
+                "TOTP of \"{cli}\" differs: keepass-rs {}, KeePassXC {theirs_code}",
+                mine.join(" or ")
+            );
             if !raw.contains("digits=")
-                && mine.len() == 8
                 && theirs_code.len() == 6
-                && mine.ends_with(&theirs_code)
+                && mine
+                    .iter()
+                    .any(|m| m.len() == 8 && m.ends_with(&theirs_code))
             {
                 sec.known("K3", line);
             } else {

@@ -11,6 +11,8 @@ publish = false
 keepass.workspace = true
 serde.workspace = true
 zeroize.workspace = true
+base64 = "0.23"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 serde_json.workspace = true

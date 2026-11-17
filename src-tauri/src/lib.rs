@@ -1,9 +1,10 @@
 mod commands;
-mod demo;
 mod error;
+mod session;
 mod settings;
 mod windows;
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use tauri::{Manager, WindowEvent};
@@ -11,7 +12,7 @@ use tauri_plugin_log::{Target, TargetKind};
 
 pub struct AppState {
     pub settings: Mutex<settings::Store>,
-    pub vault: Mutex<demo::DemoVault>,
+    pub vault: Mutex<session::Session>,
     /// the main window has the Mica backdrop, so its page must stay transparent
     pub effects: bool,
 }
@@ -45,6 +46,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::focus_main(app)
         }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(if cfg!(debug_assertions) {
@@ -67,9 +69,12 @@ pub fn run() {
             // the first calls fail and the window stays blank.)
             let config_dir = app.path().app_config_dir()?;
             let effects = windows::supports_mica();
+            let store = settings::Store::load(config_dir);
+            // start on the database used last (features.md §3.1)
+            let last = store.current.recent.first().map(|r| PathBuf::from(&r.path));
             app.manage(AppState {
-                settings: Mutex::new(settings::Store::load(config_dir)),
-                vault: Mutex::new(demo::DemoVault::load()),
+                settings: Mutex::new(store),
+                vault: Mutex::new(session::Session::new(last)),
                 effects,
             });
             windows::create_all(app.handle())?;
@@ -94,12 +99,17 @@ pub fn run() {
             commands::get_settings,
             commands::set_settings,
             commands::vault_status,
+            commands::select_database,
+            commands::choose_database,
+            commands::choose_key_file,
             commands::unlock,
             commands::lock,
+            commands::forget_recent,
             commands::list_groups,
             commands::list_entries,
             commands::search_entries,
             commands::get_entry,
+            commands::get_custom_icons,
             commands::reveal_field,
             commands::copy_field,
             commands::get_totp,

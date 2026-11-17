@@ -1,7 +1,8 @@
 //! User preferences, stored as JSON in `%APPDATA%\com.elmtran.mikoshi\settings.json`.
 //!
 //! Only non-sensitive data belongs here (features.md §6): appearance, language,
-//! and later recent file paths, key file paths and hotkeys. Never a password.
+//! recent file paths, key file paths, list sorting, and later hotkeys. Never a
+//! password, never the contents of a key file.
 
 use std::fs;
 use std::io::Write;
@@ -31,11 +32,117 @@ pub enum LanguagePref {
     EnUs,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// A database the user opened before, most recent first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentFile {
+    pub path: String,
+    /// The key file last used with it (only the path). Kept only while
+    /// `remember_key_files` is on.
+    #[serde(default)]
+    pub key_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SortKey {
+    Title,
+    Username,
+    Url,
+    #[default]
+    Modified,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EntrySort {
+    pub key: SortKey,
+    pub desc: bool,
+}
+
+impl Default for EntrySort {
+    /// newest first (design/README.md)
+    fn default() -> Self {
+        EntrySort {
+            key: SortKey::Modified,
+            desc: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub theme: ThemePref,
     pub language: LanguagePref,
+    /// Managed by the Rust side: the frontend cannot overwrite it through
+    /// `set_settings`, only open or forget files.
+    pub recent: Vec<RecentFile>,
+    pub remember_key_files: bool,
+    pub entry_sort: EntrySort,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            theme: ThemePref::default(),
+            language: LanguagePref::default(),
+            recent: Vec::new(),
+            remember_key_files: true,
+            entry_sort: EntrySort::default(),
+        }
+    }
+}
+
+pub const MAX_RECENT: usize = 10;
+
+/// Windows paths are case-insensitive.
+fn same_path(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
+impl Settings {
+    /// Moves `path` to the top of the recent list, with the key file that
+    /// opened it (if key files are remembered).
+    pub fn note_opened(&mut self, path: &str, key_file: Option<&str>) {
+        self.recent.retain(|r| !same_path(&r.path, path));
+        self.recent.insert(
+            0,
+            RecentFile {
+                path: path.to_string(),
+                key_file: key_file
+                    .filter(|_| self.remember_key_files)
+                    .map(str::to_string),
+            },
+        );
+        self.recent.truncate(MAX_RECENT);
+    }
+
+    pub fn forget(&mut self, path: &str) {
+        self.recent.retain(|r| !same_path(&r.path, path));
+    }
+
+    pub fn key_file_for(&self, path: &str) -> Option<String> {
+        self.recent
+            .iter()
+            .find(|r| same_path(&r.path, path))
+            .and_then(|r| r.key_file.clone())
+    }
+
+    /// Takes the user-editable part of `incoming`; the recent list stays as
+    /// it is here. Turning key file memory off forgets the stored paths.
+    pub fn merge_from_ui(&self, incoming: Settings) -> Settings {
+        let mut next = Settings {
+            recent: self.recent.clone(),
+            ..incoming
+        };
+        if !next.remember_key_files {
+            for r in &mut next.recent {
+                r.key_file = None;
+            }
+        }
+        next
+    }
 }
 
 pub struct Store {
@@ -83,6 +190,14 @@ impl Store {
         self.current = settings;
         Ok(())
     }
+
+    /// Applies `change` to a copy of the current settings and saves it.
+    pub fn update(&mut self, change: impl FnOnce(&mut Settings)) -> AppResult<Settings> {
+        let mut next = self.current.clone();
+        change(&mut next);
+        self.save(next.clone())?;
+        Ok(next)
+    }
 }
 
 #[cfg(test)]
@@ -100,17 +215,21 @@ mod tests {
         let dir = temp_dir("settings");
         let mut store = Store::load(dir.clone());
         assert_eq!(store.current, Settings::default());
+        assert!(store.current.remember_key_files);
 
-        let s = Settings {
+        let mut s = Settings {
             theme: ThemePref::Dark,
             language: LanguagePref::EnUs,
+            ..Settings::default()
         };
+        s.note_opened(r"D:\a.kdbx", Some(r"D:\a.keyx"));
         store.save(s.clone()).unwrap();
         assert_eq!(Store::load(dir.clone()).current, s);
 
         let text = fs::read_to_string(dir.join("settings.json")).unwrap();
         assert!(text.contains("\"theme\": \"dark\""));
         assert!(text.contains("\"language\": \"en-US\""));
+        assert!(text.contains("\"keyFile\""));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -129,6 +248,57 @@ mod tests {
         let s = Store::load(dir.clone()).current;
         assert_eq!(s.theme, ThemePref::Light);
         assert_eq!(s.language, LanguagePref::System);
+        assert!(s.remember_key_files);
+        assert_eq!(s.entry_sort, EntrySort::default());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recent_list_moves_to_front_and_is_capped() {
+        let mut s = Settings::default();
+        for i in 0..12 {
+            s.note_opened(&format!(r"D:\{i}.kdbx"), None);
+        }
+        assert_eq!(s.recent.len(), MAX_RECENT);
+        assert_eq!(s.recent[0].path, r"D:\11.kdbx");
+
+        s.note_opened(r"d:\5.KDBX", Some(r"D:\k.key"));
+        assert_eq!(s.recent[0].path, r"d:\5.KDBX");
+        assert_eq!(
+            s.recent
+                .iter()
+                .filter(|r| r.path.ends_with("5.kdbx"))
+                .count(),
+            0
+        );
+        assert_eq!(s.key_file_for(r"D:\5.kdbx").as_deref(), Some(r"D:\k.key"));
+
+        s.forget(r"D:\5.kdbx");
+        assert!(s.key_file_for(r"D:\5.kdbx").is_none());
+    }
+
+    #[test]
+    fn ui_cannot_overwrite_recent_files_and_can_forget_key_files() {
+        let mut s = Settings::default();
+        s.note_opened(r"D:\a.kdbx", Some(r"D:\a.keyx"));
+        let stale = Settings {
+            theme: ThemePref::Dark,
+            ..Settings::default()
+        };
+        let merged = s.merge_from_ui(stale);
+        assert_eq!(merged.theme, ThemePref::Dark);
+        assert_eq!(merged.recent, s.recent);
+
+        let off = Settings {
+            remember_key_files: false,
+            ..s.clone()
+        };
+        let merged = s.merge_from_ui(off);
+        assert_eq!(merged.recent.len(), 1);
+        assert!(merged.recent[0].key_file.is_none());
+
+        let mut s = merged;
+        s.note_opened(r"D:\b.kdbx", Some(r"D:\b.keyx"));
+        assert!(s.key_file_for(r"D:\b.kdbx").is_none());
     }
 }

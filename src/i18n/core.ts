@@ -28,8 +28,9 @@ export function translatePlural(locale: Locale, key: PluralKey, n: number, vars?
 }
 
 export interface Formatters {
-  date: (iso: string) => string;
-  dateTime: (iso: string) => string;
+  /** null (a time the file does not have) gives a dash */
+  date: (iso: string | null) => string;
+  dateTime: (iso: string | null) => string;
   size: (bytes: number) => string;
 }
 
@@ -37,9 +38,14 @@ export function formatters(locale: Locale): Formatters {
   const date = new Intl.DateTimeFormat(locale, { year: 'numeric', month: '2-digit', day: '2-digit' });
   const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
   const num = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+  // an invalid date would make Intl throw; show a dash instead
+  const safe = (f: Intl.DateTimeFormat) => (iso: string | null) => {
+    const d = iso ? new Date(iso) : null;
+    return d && !Number.isNaN(d.getTime()) ? f.format(d) : '—';
+  };
   return {
-    date: (iso) => date.format(new Date(iso)),
-    dateTime: (iso) => dateTime.format(new Date(iso)),
+    date: safe(date),
+    dateTime: safe(dateTime),
     size: (b) =>
       b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${num.format(b / 1024)} KB` : `${num.format(b / 1048576)} MB`,
   };

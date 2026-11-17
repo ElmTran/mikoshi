@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, listen } from '../api';
-import type { AppInfo, Settings } from '../api/types';
+import { DEFAULT_SETTINGS, type AppInfo, type Settings } from '../api/types';
 import { formatters, resolveLocale, translate, translatePlural } from '../i18n/core';
 import {
   applyTheme,
@@ -11,8 +11,6 @@ import {
 } from '../theme';
 import { PrefsContext, type Prefs } from './contexts';
 
-const DEFAULTS: Settings = { theme: 'system', language: 'system' };
-
 /** Loads settings once, keeps them in sync across windows, applies theme and language. */
 export function PrefsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -20,7 +18,10 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<AppInfo | null>(null);
 
   useEffect(() => {
-    api.getSettings().then(setSettings, () => setSettings(DEFAULTS));
+    api.getSettings().then(
+      (s) => setSettings({ ...DEFAULT_SETTINGS, ...s }),
+      () => setSettings(DEFAULT_SETTINGS),
+    );
     api.appInfo().then(setInfo, () => {});
     const off = listen<Settings>('settings-changed', setSettings);
     return () => void off.then((f) => f());

@@ -4,5 +4,7 @@
 pub mod model;
 pub mod search;
 pub mod secret;
+pub mod vault;
 
 pub use secret::Secret;
+pub use vault::{Credentials, OpenError, Vault};

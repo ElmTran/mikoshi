@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
-import { Field, type EntryDetail as Detail, type TotpView } from '../api/types';
+import { AppError, Field, type EntryDetail as Detail, type TotpView } from '../api/types';
 import { usePrefs } from '../app/contexts';
-import { Avatar, Keys } from './bits';
+import { EntryIcon, Keys } from './bits';
 import { Icon } from './Icon';
 
 export interface DetailActions {
@@ -28,6 +28,8 @@ const MASK = '••••••••••••'; // fixed length: never hint
 function Totp({ entryId }: { entryId: string }) {
   const { t } = usePrefs();
   const [totp, setTotp] = useState<TotpView | null>(null);
+  // codes are computed from M3 on; until then the row says so
+  const [notYet, setNotYet] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -40,7 +42,11 @@ function Totp({ entryId }: { entryId: string }) {
           // the code is computed on the Rust side; refetch when it rolls over
           timer = window.setTimeout(load, v.remaining * 1000 + 50);
         },
-        () => live && setTotp(null),
+        (e: unknown) => {
+          if (!live) return;
+          setTotp(null);
+          setNotYet(e instanceof AppError && e.code === 'notYet');
+        },
       );
     void load();
     const tick = window.setInterval(
@@ -54,7 +60,7 @@ function Totp({ entryId }: { entryId: string }) {
     };
   }, [entryId]);
 
-  if (!totp) return <span className="muted">······</span>;
+  if (!totp) return <span className="muted">{notYet ? t('totp.notYet') : '······'}</span>;
   const low = totp.remaining <= 5;
   return (
     <span className={low ? 'totp low' : 'totp'}>
@@ -76,6 +82,8 @@ interface RowProps {
   shown?: boolean;
   revealShortcut?: string[];
   open?: boolean;
+  /** no value: shows a dash, and there is nothing to copy */
+  empty?: boolean;
   copied: boolean;
   actions: DetailActions;
 }
@@ -89,6 +97,7 @@ function FieldRow({
   shown,
   revealShortcut,
   open,
+  empty,
   copied,
   actions,
 }: RowProps) {
@@ -97,9 +106,9 @@ function FieldRow({
   return (
     <div className="field">
       <div className="field-label">{label}</div>
-      <div className="field-value">{value}</div>
+      <div className="field-value">{empty ? <span className="muted">—</span> : value}</div>
       <div className="field-actions">
-        {shortcut && <Keys keys={shortcut} />}
+        {shortcut && !empty && <Keys keys={shortcut} />}
         {open && (
           <button
             className="act"
@@ -119,13 +128,15 @@ function FieldRow({
             <Icon name={shown ? 'eyeOff' : 'eye'} />
           </button>
         )}
-        <button
-          className={copied ? 'act copy done' : 'act copy'}
-          title={hint(t('field.copy'), shortcut)}
-          onClick={() => actions.copy(fieldKey)}
-        >
-          <Icon name={copied ? 'check' : 'copy'} />
-        </button>
+        {!empty && (
+          <button
+            className={copied ? 'act copy done' : 'act copy'}
+            title={hint(t('field.copy'), shortcut)}
+            onClick={() => actions.copy(fieldKey)}
+          >
+            <Icon name={copied ? 'check' : 'copy'} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -143,7 +154,7 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
   return (
     <div className="detail-scroll" key={entry.id}>
       <header className="detail-head">
-        <Avatar title={entry.title} size="lg" />
+        <EntryIcon icon={entry.icon} customIcon={entry.customIcon} title={entry.title} size="lg" />
         <div className="detail-titles">
           <h1 className="detail-title">{entry.title}</h1>
           <div className="detail-path">{entry.groupPath.join(' / ')}</div>
@@ -187,6 +198,7 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
           label={t('field.username')}
           fieldKey={Field.UserName}
           value={entry.username}
+          empty={!entry.username}
           shortcut={['Ctrl', 'B']}
           copied={copied === Field.UserName}
           actions={actions}
@@ -231,6 +243,8 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
             label={f.key}
             fieldKey={f.key}
             value={f.protected ? secretValue(f.key) : f.value}
+            // a protected value is unknown until shown, so only plain ones can be empty
+            empty={!f.protected && !f.value}
             secret={f.protected}
             shown={f.key in revealed}
             copied={copied === f.key}

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useRef, useState, type MouseEvent } from 'react';
 import { usePrefs } from '../app/contexts';
 import type { LanguagePref, ThemePref } from '../api/types';
 import { Icon, type IconName } from './Icon';
+import { useDismiss } from './useDismiss';
 
 const THEMES: { value: ThemePref; icon: IconName }[] = [
   { value: 'system', icon: 'monitor' },
@@ -10,30 +11,13 @@ const THEMES: { value: ThemePref; icon: IconName }[] = [
 ];
 const LANGUAGES: LanguagePref[] = ['system', 'zh-CN', 'en-US'];
 
-/** Small flyout under the title bar: appearance and language. */
+/** Small flyout under the title bar: appearance, language, unlock options. */
 export function SettingsButton() {
   const { t, settings, update, info } = usePrefs();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    window.addEventListener('pointerdown', onDown);
-    window.addEventListener('keydown', onKey, true);
-    return () => {
-      window.removeEventListener('pointerdown', onDown);
-      window.removeEventListener('keydown', onKey, true);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, root, close);
 
   const pickTheme = (value: ThemePref, e: MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -87,6 +71,21 @@ export function SettingsButton() {
                 </button>
               ))}
             </div>
+          </div>
+          <div className="flyout-section">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.rememberKeyFiles}
+              className="switch-row"
+              onClick={() => void update({ rememberKeyFiles: !settings.rememberKeyFiles })}
+            >
+              <span className="switch-text">
+                <span>{t('settings.rememberKeyFiles')}</span>
+                <span className="switch-hint">{t('settings.rememberKeyFilesHint')}</span>
+              </span>
+              <span className={settings.rememberKeyFiles ? 'switch on' : 'switch'} aria-hidden="true" />
+            </button>
           </div>
           {info && <div className="flyout-foot">{t('settings.version', { v: info.version })}</div>}
         </div>

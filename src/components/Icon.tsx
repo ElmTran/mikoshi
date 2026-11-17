@@ -82,6 +82,10 @@ const PATHS = {
     </>
   ),
   chevron: <path d="M7 10l5 5 5-5" />,
+  sortDown: <path d="M12 5.5v13M7.5 14l4.5 4.5 4.5-4.5" />,
+  folderOpen: (
+    <path d="M3.5 17.5v-11a1.5 1.5 0 0 1 1.5-1.5h3.7l2 2.2h7.3a1.5 1.5 0 0 1 1.5 1.5V10M3.5 18.5l2.7-7a1.5 1.5 0 0 1 1.4-1h13a1 1 0 0 1 .9 1.4l-2.4 6a1.5 1.5 0 0 1-1.4 1.1H3.5z" />
+  ),
   settings: (
     <>
       <circle cx="12" cy="12" r="2.8" />
@@ -112,7 +116,15 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS;
 
-export function Icon({ name, size = 16, className }: { name: IconName; size?: number; className?: string }) {
+export function Icon({
+  name,
+  size = 16,
+  className,
+}: {
+  name: IconName;
+  size?: number;
+  className?: string | undefined;
+}) {
   return (
     <svg
       className={className ? `icon ${className}` : 'icon'}

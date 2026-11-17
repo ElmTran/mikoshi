@@ -15,6 +15,8 @@ pub enum GroupKind {
     RecycleBin,
 }
 
+/// Groups come in tree order (depth first, recycle bin last among the
+/// root's children), so the list can be drawn top to bottom.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupView {
@@ -24,6 +26,13 @@ pub struct GroupView {
     pub depth: u32,
     pub kind: GroupKind,
     pub entry_count: u32,
+    /// KeePass standard icon number, 0–68
+    pub icon: u32,
+    /// id of a custom icon (see [`CustomIconView`]); shown instead of `icon`
+    pub custom_icon: Option<String>,
+    /// whether the group is expanded in the tree, as the file remembers it
+    pub expanded: bool,
+    pub has_children: bool,
 }
 
 /// One row of the entry list.
@@ -35,11 +44,25 @@ pub struct EntrySummary {
     pub title: String,
     pub username: String,
     pub url: String,
-    /// ISO 8601, local time, e.g. `2026-11-12T14:20:00`
-    pub modified: String,
+    /// ISO 8601 in UTC, e.g. `2026-11-12T06:20:00Z` (KeePass stores UTC);
+    /// `None` when the file has no such time
+    pub modified: Option<String>,
     pub expired: bool,
     pub has_totp: bool,
     pub tags: Vec<String>,
+    pub icon: u32,
+    pub custom_icon: Option<String>,
+}
+
+/// A custom icon image as stored in the database (usually a PNG favicon).
+/// Not secret: it is shown like a title. The UI turns it into a data URL.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomIconView {
+    pub id: String,
+    pub mime: &'static str,
+    /// base64 of the image bytes
+    pub data: String,
 }
 
 /// A custom field. `value` is `None` when the field is protected: the
@@ -71,8 +94,9 @@ pub struct EntryDetail {
     pub url: String,
     pub notes: String,
     pub tags: Vec<String>,
-    pub created: String,
-    pub modified: String,
+    /// ISO 8601 in UTC, like [`EntrySummary::modified`]
+    pub created: Option<String>,
+    pub modified: Option<String>,
     /// `None` means "never expires"
     pub expires: Option<String>,
     pub expired: bool,
@@ -80,6 +104,8 @@ pub struct EntryDetail {
     pub has_totp: bool,
     pub fields: Vec<FieldView>,
     pub attachments: Vec<AttachmentView>,
+    pub icon: u32,
+    pub custom_icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

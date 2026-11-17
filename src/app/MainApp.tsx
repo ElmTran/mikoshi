@@ -5,6 +5,7 @@ import { appWindow } from '../api/window';
 import { TitleBar } from '../components/TitleBar';
 import { UnlockScreen } from '../components/Unlock';
 import { usePrefs } from './contexts';
+import { CustomIconsProvider } from './CustomIcons';
 import { Workspace } from './Workspace';
 
 export function MainApp() {
@@ -57,6 +58,8 @@ export function MainApp() {
       <UnlockScreen status={status} />
     </div>
   ) : (
-    <Workspace status={status} key="open" />
+    <CustomIconsProvider unlocked key="open">
+      <Workspace status={status} />
+    </CustomIconsProvider>
   );
 }

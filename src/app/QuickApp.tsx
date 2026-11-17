@@ -2,14 +2,14 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import { api, isTauri, listen } from '../api';
 import { AppError, Field, type EntrySummary, type VaultStatus } from '../api/types';
 import { appWindow } from '../api/window';
-import { Avatar, Keys } from '../components/bits';
+import { EntryIcon, Keys } from '../components/bits';
 import { Icon } from '../components/Icon';
 import { UnlockForm } from '../components/Unlock';
+import { host } from '../text';
 import { usePrefs } from './contexts';
+import { CustomIconsProvider } from './CustomIcons';
 
 type Action = 'password' | 'username' | 'totp' | 'autotype';
-
-const host = (url: string) => url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0] ?? url;
 
 function Highlight({ text, query }: { text: string; query: string }) {
   const i = query ? text.toLowerCase().indexOf(query.toLowerCase()) : -1;
@@ -102,7 +102,10 @@ export function QuickApp() {
       (err: unknown) =>
         setFlash({
           id: e.id,
-          text: t(`error.${err instanceof AppError ? err.code : 'internal'}`),
+          text:
+            err instanceof AppError && err.code === 'notYet'
+              ? t('toast.copyNotYet')
+              : t(`error.${err instanceof AppError ? err.code : 'internal'}`),
           ok: false,
         }),
     );
@@ -127,101 +130,107 @@ export function QuickApp() {
   if (!status) return null;
 
   return (
-    <div className="quick-stage" onKeyDown={onKey}>
-      <div className="qs" key={opened} role="dialog" aria-label={t('toolbar.quickSearch')}>
-        {status.locked ? (
-          <div className="qs-locked">
-            <UnlockForm status={status} compact />
-          </div>
-        ) : (
-          <>
-            <label className="qs-input">
-              <Icon name="search" size={20} />
-              <input
-                ref={input}
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t('quick.placeholder')}
-                aria-label={t('quick.placeholder')}
-                spellCheck={false}
-                autoComplete="off"
-              />
-              <span className="qs-db">
-                <Icon name="vault" />
-                {status.name}
-              </span>
-            </label>
-            {!q && results.length > 0 && <div className="qs-caption">{t('quick.recent')}</div>}
-            <div className="qs-results" role="listbox">
-              {results.map((e, i) => {
-                const sub =
-                  q &&
-                  !e.username.toLowerCase().includes(q.toLowerCase()) &&
-                  e.url.toLowerCase().includes(q.toLowerCase())
-                    ? host(e.url)
-                    : e.username;
-                const flashing = flash?.id === e.id ? flash : null;
-                return (
-                  <div
-                    key={e.id}
-                    className={i === index ? 'qr on' : 'qr'}
-                    role="option"
-                    aria-selected={i === index}
-                    onMouseMove={() => setIndex(i)}
-                    onDoubleClick={() => run('password')}
-                  >
-                    <Avatar title={e.title} />
-                    <span className="qr-main">
-                      <span className="qr-title">
-                        <Highlight text={e.title} query={q} />
-                      </span>
-                      <span className="qr-sub">
-                        <Highlight text={sub} query={q} />
-                      </span>
-                    </span>
-                    {flashing ? (
-                      <span className={flashing.ok ? 'qr-flash ok' : 'qr-flash'}>
-                        <Icon name={flashing.ok ? 'check' : 'warn'} size={14} />
-                        {flashing.text}
-                      </span>
-                    ) : (
-                      e.hasTotp && (
-                        <span className="qr-totp" title={t('quick.hasTotp')}>
-                          <Icon name="clock" size={14} />
-                        </span>
-                      )
-                    )}
-                  </div>
-                );
-              })}
-              {results.length === 0 && q && <div className="qs-empty">{t('quick.none', { q })}</div>}
+    <CustomIconsProvider unlocked={unlocked}>
+      <div className="quick-stage" onKeyDown={onKey}>
+        <div className="qs" key={opened} role="dialog" aria-label={t('toolbar.quickSearch')}>
+          {!status.path ? (
+            <div className="qs-locked">
+              <p className="qs-empty">{t('quick.noDatabase')}</p>
             </div>
-            <footer className="qs-foot">
-              <span className="hint">
-                <Keys keys={['Enter']} />
-                {t('quick.copyPassword')}
-              </span>
-              <span className="hint">
-                <Keys keys={['Ctrl', 'Enter']} />
-                {t('quick.autotype')}
-              </span>
-              <span className="hint">
-                <Keys keys={['Ctrl', 'B']} />
-                {t('quick.copyUsername')}
-              </span>
-              <span className="hint">
-                <Keys keys={['Ctrl', 'T']} />
-                {t('quick.copyTotp')}
-              </span>
-              <span className="hint">
-                <Keys keys={['Esc']} />
-                {t('quick.close')}
-              </span>
-            </footer>
-          </>
-        )}
+          ) : status.locked ? (
+            <div className="qs-locked">
+              <UnlockForm status={status} compact />
+            </div>
+          ) : (
+            <>
+              <label className="qs-input">
+                <Icon name="search" size={20} />
+                <input
+                  ref={input}
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('quick.placeholder')}
+                  aria-label={t('quick.placeholder')}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                <span className="qs-db">
+                  <Icon name="vault" />
+                  {status.name}
+                </span>
+              </label>
+              {!q && results.length > 0 && <div className="qs-caption">{t('quick.recent')}</div>}
+              <div className="qs-results" role="listbox">
+                {results.map((e, i) => {
+                  const sub =
+                    q &&
+                    !e.username.toLowerCase().includes(q.toLowerCase()) &&
+                    e.url.toLowerCase().includes(q.toLowerCase())
+                      ? host(e.url)
+                      : e.username;
+                  const flashing = flash?.id === e.id ? flash : null;
+                  return (
+                    <div
+                      key={e.id}
+                      className={i === index ? 'qr on' : 'qr'}
+                      role="option"
+                      aria-selected={i === index}
+                      onMouseMove={() => setIndex(i)}
+                      onDoubleClick={() => run('password')}
+                    >
+                      <EntryIcon icon={e.icon} customIcon={e.customIcon} title={e.title} />
+                      <span className="qr-main">
+                        <span className="qr-title">
+                          <Highlight text={e.title} query={q} />
+                        </span>
+                        <span className="qr-sub">
+                          <Highlight text={sub} query={q} />
+                        </span>
+                      </span>
+                      {flashing ? (
+                        <span className={flashing.ok ? 'qr-flash ok' : 'qr-flash'}>
+                          <Icon name={flashing.ok ? 'check' : 'warn'} size={14} />
+                          {flashing.text}
+                        </span>
+                      ) : (
+                        e.hasTotp && (
+                          <span className="qr-totp" title={t('quick.hasTotp')}>
+                            <Icon name="clock" size={14} />
+                          </span>
+                        )
+                      )}
+                    </div>
+                  );
+                })}
+                {results.length === 0 && q && <div className="qs-empty">{t('quick.none', { q })}</div>}
+              </div>
+              <footer className="qs-foot">
+                <span className="hint">
+                  <Keys keys={['Enter']} />
+                  {t('quick.copyPassword')}
+                </span>
+                <span className="hint">
+                  <Keys keys={['Ctrl', 'Enter']} />
+                  {t('quick.autotype')}
+                </span>
+                <span className="hint">
+                  <Keys keys={['Ctrl', 'B']} />
+                  {t('quick.copyUsername')}
+                </span>
+                <span className="hint">
+                  <Keys keys={['Ctrl', 'T']} />
+                  {t('quick.copyTotp')}
+                </span>
+                <span className="hint">
+                  <Keys keys={['Esc']} />
+                  {t('quick.close')}
+                </span>
+              </footer>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </CustomIconsProvider>
   );
 }

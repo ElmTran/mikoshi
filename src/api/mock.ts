@@ -1,10 +1,11 @@
 // Browser-only stand-in for the Rust commands, used by `pnpm dev` outside
-// Tauri so the UI can be worked on in a normal browser. Same demo data, same
-// rules (nothing secret in the views). Never part of a production build.
+// Tauri so the UI can be worked on in a normal browser. Demo data, same rules
+// (nothing secret in the views). Never part of a production build.
 
-import demo from '../../src-tauri/demo/vault.json';
+import demo from './mock-vault.json';
 import {
   AppError,
+  DEFAULT_SETTINGS,
   type EntryDetail,
   type EntrySummary,
   type GroupKind,
@@ -38,7 +39,41 @@ const data = demo as {
   groups: typeof demo.groups;
   entries: DemoEntry[];
 };
+
+/** Standard icons for the demo data, so the browser preview is not all keys. */
+const ICONS: Record<string, number> = {
+  root: 49,
+  fav: 61,
+  work: 59,
+  srv: 3,
+  fin: 66,
+  social: 5,
+  game: 11,
+  bin: 43,
+  github: 30,
+  jd: 47,
+  mail163: 19,
+  router: 3,
+  outlook: 19,
+  vpn: 24,
+  gitlab: 30,
+  jenkins: 33,
+  wiki: 65,
+  aliyun: 27,
+  notion: 44,
+  prod: 3,
+  staging: 3,
+  pg: 42,
+  cmb: 66,
+  alipay: 37,
+  tax: 67,
+  bili: 28,
+  douban: 56,
+  steam: 68,
+};
+
 let locked = true;
+let current: string | null = data.path;
 const bus = new EventTarget();
 
 function emit(event: string, payload: unknown) {
@@ -51,7 +86,38 @@ export function listen(event: string, handler: (payload: unknown) => void): () =
   return () => bus.removeEventListener(event, fn);
 }
 
-const status = (): VaultStatus => ({ locked, name: data.name, file: data.file, path: data.path });
+const SETTINGS_KEY = 'mikoshi.settings';
+
+function loadSettings(): Settings {
+  try {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function saveSettings(s: Settings) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  emit('settings-changed', s);
+  return s;
+}
+
+const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+const status = (): VaultStatus => ({
+  locked,
+  path: current,
+  file: current ? baseName(current) : null,
+  name: locked ? (current ? baseName(current).replace(/\.kdbx$/i, '') : '') : data.name,
+  keyFile: loadSettings().recent.find((r) => r.path === current)?.keyFile ?? null,
+});
+
+function announce() {
+  const s = status();
+  emit('vault-changed', s);
+  return s;
+}
+
 const kindOf = (id: string) => data.groups.find((g) => g.id === id)?.kind as GroupKind | undefined;
 const inBin = (e: DemoEntry) => kindOf(e.group) === 'recycleBin';
 const expired = (e: DemoEntry) => Boolean(e.expires && e.expires <= new Date().toISOString().slice(0, 19));
@@ -77,6 +143,8 @@ function summary(e: DemoEntry): EntrySummary {
     expired: expired(e),
     hasTotp: Boolean(e.otp),
     tags: e.tags ?? [],
+    icon: ICONS[e.id] ?? 0,
+    customIcon: null,
   };
 }
 
@@ -140,18 +208,8 @@ function field(e: DemoEntry, key: string): string {
   }
 }
 
-const SETTINGS_KEY = 'mikoshi.settings';
-
-function loadSettings(): Settings {
-  try {
-    return { theme: 'system', language: 'system', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') };
-  } catch {
-    return { theme: 'system', language: 'system' };
-  }
-}
-
 export async function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
-  const a = args as Record<string, string>;
+  const a = args as Record<string, string | null | undefined>;
   const result = ((): unknown => {
     switch (cmd) {
       case 'app_info':
@@ -159,21 +217,50 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
       case 'get_settings':
         return loadSettings();
       case 'set_settings': {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(args.settings));
-        emit('settings-changed', args.settings);
-        return args.settings;
+        const s = { ...(args.settings as Settings), recent: loadSettings().recent };
+        if (!s.rememberKeyFiles) s.recent = s.recent.map((r) => ({ ...r, keyFile: null }));
+        return saveSettings(s);
       }
       case 'vault_status':
         return status();
-      case 'unlock':
-        if (!a.password) throw new AppError('emptyPassword');
+      case 'select_database':
+        locked = true;
+        current = a.path ?? null;
+        return announce();
+      case 'choose_database':
+        // no file dialog in a browser: pretend the demo file was picked
+        locked = true;
+        current = data.path;
+        return announce();
+      case 'choose_key_file':
+        return 'D:\\同步盘\\个人密码库.keyx';
+      case 'unlock': {
+        if (!current) throw new AppError('noDatabase');
+        if (!a.password && !a.keyFile) throw new AppError('emptyPassword');
         locked = false;
-        emit('vault-changed', status());
-        return status();
+        const s = loadSettings();
+        const path = current;
+        saveSettings({
+          ...s,
+          recent: [
+            { path, keyFile: s.rememberKeyFiles ? (a.keyFile ?? null) : null },
+            ...s.recent.filter((r) => r.path !== path),
+          ].slice(0, 10),
+        });
+        return announce();
+      }
       case 'lock':
         locked = true;
-        emit('vault-changed', status());
-        return status();
+        return announce();
+      case 'forget_recent': {
+        const s = loadSettings();
+        const next = saveSettings({ ...s, recent: s.recent.filter((r) => r.path !== a.path) });
+        if (locked && current === a.path) {
+          current = next.recent[0]?.path ?? null;
+          announce();
+        }
+        return next;
+      }
       case 'list_groups':
         open();
         return data.groups.map((g): GroupView => ({
@@ -183,12 +270,14 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
           depth: depth(g.id),
           kind: g.kind as GroupKind,
           entryCount: entriesIn(g.id).length,
+          icon: ICONS[g.id] ?? 48,
+          customIcon: null,
+          expanded: true,
+          hasChildren: data.groups.some((c) => c.parent === g.id),
         }));
       case 'list_entries':
         open();
-        return entriesIn(a.groupId ?? '')
-          .map(summary)
-          .sort((x, y) => y.modified.localeCompare(x.modified));
+        return entriesIn(a.groupId ?? '').map(summary);
       case 'search_entries': {
         open();
         const q = a.query ?? '';
@@ -224,15 +313,16 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
         };
         return detail;
       }
+      case 'get_custom_icons':
+        open();
+        return [];
       case 'reveal_field':
         return field(find(a.entryId ?? ''), a.key ?? '');
       case 'copy_field': {
         const e = find(a.entryId ?? '');
         field(e, a.key ?? '');
-        const key = a.key ?? '';
-        const secret =
-          key === 'Password' || key === '@totp' || Boolean(e.fields?.find((f) => f.key === key)?.protected);
-        return { clearsAfter: secret ? 10 : null };
+        // like the app until M3: copying does not reach the clipboard yet
+        throw new AppError('notYet');
       }
       case 'get_totp': {
         const e = find(a.entryId ?? '');

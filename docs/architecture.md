@@ -6,21 +6,34 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 
 | 路径 | 内容 |
 |---|---|
-| `crates/mikoshi-core/` | 核心库，不依赖 Tauri：`Secret` 类型、给前端看的数据类型（`model`）、搜索排序。M2 起 KDBX 读写也放这里 |
+| `crates/mikoshi-core/` | 核心库，不依赖 Tauri：`Secret` 类型、给前端看的数据类型（`model`）、搜索排序、打开和读取 KDBX（`vault`） |
 | `crates/kdbx-compat/` | M0 的兼容性检查工具，同时是回归测试 |
-| `src-tauri/` | 桌面程序：窗口、命令、设置文件、日志。`demo/vault.json` 是 M1 样稿用的假数据库，M2 换成真实的库 |
-| `src/` | 前端（React + TypeScript）：`api/` 是唯一和 Rust 通信的地方，`app/` 是页面和状态，`components/` 是界面部件，`i18n/` 是中英文文案，`styles/` 是样式 |
+| `src-tauri/` | 桌面程序：窗口、命令、当前选中和已解锁的库（`session.rs`）、设置文件、日志 |
+| `src/` | 前端（React + TypeScript）：`api/` 是唯一和 Rust 通信的地方，`app/` 是页面和状态，`components/` 是界面部件，`icons/` 是 KeePass 标准图标，`i18n/` 是中英文文案，`styles/` 是样式 |
 | `design/mockups/` | 选风格时的三套静态样稿，留作记录 |
+| `design/icons/` | 69 个标准图标的预览页，由 `tools/icon-sheet.mjs` 生成 |
 | `tests/fixtures/` | KDBX 测试库 |
 
 ## 前后端边界
 
 **明文只留在 Rust 端。** 这是 features.md §6 的要求，落到代码上是四条规则：
 
-1. **前端拿到的数据类型里没有秘密。** `EntrySummary`、`EntryDetail` 等类型定义在 `mikoshi-core/src/model.rs`，里面没有密码、受保护字段的值和 TOTP 密钥。受保护的自定义字段，`value` 是 `null`。`src-tauri/src/demo.rs` 里有一条测试，把每个条目的视图序列化成 JSON，检查里面不含密码和受保护字段。
+1. **前端拿到的数据类型里没有秘密。** `EntrySummary`、`EntryDetail` 等类型定义在 `mikoshi-core/src/model.rs`，里面没有密码、受保护字段的值和 TOTP 密钥。受保护的自定义字段，`value` 是 `null`。存 TOTP 密钥的字段（`otp`、`TOTP Seed`、`TOTP Settings`、`TimeOtp-*`、`HmacOtp-*`）根本不出现在字段列表里，`reveal_field` 也拒绝它们。`mikoshi-core/src/vault.rs` 里有一条测试，用测试库把所有视图序列化成 JSON，检查里面不含任何受保护的值和 TOTP 密钥。
 2. **复制、TOTP、自动输入都传条目 ID，由 Rust 端完成。** 前端调 `copy_field(entryId, key)`，值不经过前端。
 3. **只有 `reveal_field` 会把一个秘密发给前端**，而且只在用户主动点"显示"（以及 M6 的"编辑"）时调用。前端把它存在组件状态里，切换条目、隐藏、锁定时立即丢弃。快速搜索窗口没有调用它的权限。
 4. **秘密在 Rust 里用 `Secret` 类型。** 它的 `Debug` 和 `Display` 只输出 `[redacted]`，释放时擦除内存，并且故意没有实现 `Serialize`：想把它发给前端，只能显式调用 `.expose()`，这样所有出口都能搜到。
+
+标题、用户名、网址、备注、标签、自定义图标属于元数据，照常发给前端，即使库的"内存保护"设置把它们标成受保护（规格 §6 的划分）。
+
+### 打开和锁定
+
+- 解锁在后台线程里做（`unlock` 是异步命令），KDF 要花一秒左右也不会卡住窗口
+- keepass-rs 遇到某些坏文件会 panic（M0 的 K9），打开时用 `catch_unwind` 拦住，报"文件已损坏"
+- KeePass 1 的 `.kdb` 文件明确拒绝；KDBX 3.1 分不清密码错误和文件损坏时报"主密码或密钥文件不对，也可能是文件已损坏"（M0 的 K5）
+- 打开时不写任何文件，包括库本身。分组的折叠状态也只在内存里，不写回
+- 锁定就是丢掉解锁后的 `Vault`：keepass-rs 用 `SecretBox` 存受保护的值，释放时擦除。前端随之卸载工作区，所有缓存一起丢掉
+- 时间一律用 UTC 的 ISO 8601（`2026-11-12T06:20:00Z`），前端按本地时区显示；文件里没有的时间是 `null`
+- 根分组列出回收站以外的全部条目，其他分组只列自己的条目；回收站排在根分组子分组的最后；搜索跳过回收站和关闭了搜索的分组（`EnableSearching`，未设置时继承父分组）
 
 ### 命令
 
@@ -30,17 +43,22 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 |---|---|---|---|
 | `app_info` | 版本号、是否启用了云母背景 | ✓ | ✓ |
 | `get_settings` | 读设置 | ✓ | ✓ |
-| `set_settings` | 改设置 | ✓ | |
-| `vault_status` | 是否已锁定、库名和路径 | ✓ | ✓ |
-| `unlock` | 解锁 | ✓ | ✓ |
+| `set_settings` | 改设置（最近文件列表除外，见"设置文件"） | ✓ | |
+| `vault_status` | 是否已锁定、选中的库、记住的密钥文件路径 | ✓ | ✓ |
+| `select_database` | 选中一个库（最近文件列表里的）；已解锁的库会先锁定 | ✓ | |
+| `choose_database` | 弹出系统的打开文件对话框选库 | ✓ | |
+| `choose_key_file` | 弹出对话框选密钥文件，只返回路径 | ✓ | |
+| `unlock` | 用主密码和/或密钥文件解锁选中的库 | ✓ | ✓ |
 | `lock` | 锁定 | ✓ | |
+| `forget_recent` | 从最近文件列表里移除（不动文件本身） | ✓ | |
 | `list_groups` | 分组树 | ✓ | |
 | `list_entries` | 某个分组的条目 | ✓ | |
 | `search_entries` | 搜索（不含回收站） | ✓ | ✓ |
 | `get_entry` | 条目详情（不含秘密） | ✓ | |
+| `get_custom_icons` | 库里的自定义图标（图片数据） | ✓ | ✓ |
 | `reveal_field` | 取一个字段的明文 | ✓ | |
-| `copy_field` | 复制一个字段 | ✓ | ✓ |
-| `get_totp` | 当前验证码和剩余秒数 | ✓ | |
+| `copy_field` | 复制一个字段（M3 接入剪贴板，之前返回 `notYet`） | ✓ | ✓ |
+| `get_totp` | 当前验证码和剩余秒数（M3 接入，之前返回 `notYet`） | ✓ | |
 | `show_quick_search` | 显示快速搜索框 | ✓ | |
 | `hide_quick_search` | 隐藏快速搜索框 | | ✓ |
 
@@ -52,13 +70,15 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 | 事件 | 什么时候发 | 内容 |
 |---|---|---|
-| `vault-changed` | 解锁或锁定之后 | 新的库状态 |
-| `settings-changed` | 设置保存之后 | 新的设置 |
+| `vault-changed` | 解锁、锁定、选中另一个库之后 | 新的库状态 |
+| `settings-changed` | 设置保存之后（包括解锁后更新最近文件列表） | 新的设置 |
 | `quick-shown` | 快速搜索框显示时 | 无；窗口收到后清空上次的输入 |
 
 ### 错误
 
 命令失败时只返回一个错误码，例如 `{"code": "locked"}`，前端按当前语言显示对应的文案（`error.locked` 等）。错误里**不带任何用户数据**，所以可以放心写进日志或显示出来。错误码定义在 `src-tauri/src/error.rs`，前端的对应类型在 `src/api/types.ts`。
+
+解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`wrongKeyOrCorrupt`（KDBX 3.1）、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。`notYet` 表示功能在后面的里程碑接入。
 
 ## 安全基线
 
@@ -88,8 +108,13 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 ## 设置文件
 
 - 位置：`%APPDATA%\com.elmtran.mikoshi\settings.json`
-- 目前的内容：`theme`（`system` / `light` / `dark`）和 `language`（`system` / `zh-CN` / `en-US`）
-- **只放非敏感信息。** 之后会加最近打开的文件路径、密钥文件路径、热键、各种时长
+- 目前的内容：
+  - `theme`（`system` / `light` / `dark`）和 `language`（`system` / `zh-CN` / `en-US`）
+  - `recent`：最近打开的库，最新的在前，最多 10 个。每项是 `path`，加上上次用的密钥文件路径 `keyFile`（只存路径）。启动时自动选中第一个
+  - `rememberKeyFiles`：是否记住密钥文件路径，默认开。关掉时清空已经记住的路径
+  - `entrySort`：条目列表的排序（`key` 是 `title` / `username` / `url` / `modified`，`desc` 是否倒序），默认按修改时间倒序
+- `recent` 由 Rust 端维护：解锁成功时更新，`forget_recent` 删除。`set_settings` 收到的 `recent` 会被忽略，免得某个窗口拿着旧列表把新列表覆盖掉
+- **只放非敏感信息。** 之后会加热键、各种时长
 - 写入方式：先写临时文件再改名，中途崩溃不会留下半截文件
 - 文件损坏或缺字段时用默认值，不认识的字段忽略，所以新旧版本可以互相读
 - 日志在 `%LOCALAPPDATA%\com.elmtran.mikoshi\logs\`
@@ -119,6 +144,19 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 设置里有三个选项：跟随系统、浅色、深色。`src/theme.ts` 负责两件事：告诉系统窗口用哪种主题（云母背景和标题栏跟着变），以及设置 `data-theme`。跟随系统时，系统切换深浅色会立即生效。
 
+### 图标
+
+- 界面图标（复制、锁定等）在 `src/components/Icon.tsx`，KeePass 的 69 个标准图标在 `src/icons/keepass.ts`，两者同一种画法：24 × 24，1.6 像素圆头线条，颜色跟随文字
+- 标准图标是 Mikoshi 自己画的（M2 确定），按 KeePass 的编号含义对应（`KEEPASS_ICON_NAMES`）。改了之后运行 `node tools/icon-sheet.mjs` 重新生成 `design/icons/index.html` 预览，或者在 `pnpm dev` 下打开 `/?window=icons`
+- 条目图标画在彩色方块上（颜色由标题决定）；库里有自定义图标时显示自定义图标，图片加载失败就退回标准图标
+
+### 键盘
+
+- `Tab` / `Shift+Tab` 在分组树、条目列表、详情三栏之间切换；焦点在搜索框时，`Tab` 进入列表
+- 分组树：上下方向键移动，左键折叠或回到上级，右键展开或进入第一个子分组，`Enter` 进入列表
+- 条目列表：上下方向键、`Home`、`End`、`PageUp`、`PageDown`。焦点在搜索框里时上下方向键也能移动选中项
+- 每一栏作为一个整体获得焦点，焦点框画在选中的那一项上
+
 ### 中英文
 
 - 文案在 `src/i18n/zh-CN.ts` 和 `en-US.ts`，两边的键必须一致。缺键时 TypeScript 编译不过，另有测试检查占位符（`{n}` 等）一致
@@ -143,7 +181,7 @@ pnpm check
 
 依次是：装依赖；启动程序（改代码后自动刷新）；跑全部检查（类型、ESLint、clippy、格式、测试）。
 
-只改界面时也可以运行 `pnpm dev`，然后用浏览器打开 `http://127.0.0.1:1420`。这时没有 Rust 端，`src/api/mock.ts` 用同一份假数据顶替；它只在开发模式下存在，不会进正式构建。浏览器里没有云母背景，窗口按钮也不起作用。
+只改界面时也可以运行 `pnpm dev`，然后用浏览器打开 `http://127.0.0.1:1420`。这时没有 Rust 端，`src/api/mock.ts` 用 `src/api/mock-vault.json` 里的演示数据顶替（任意密码都能解锁，打开文件对话框会直接选中演示库）；它只在开发模式下存在，不会进正式构建。浏览器里没有云母背景，窗口按钮也不起作用。
 
 ### 不动鼠标键盘检查真实窗口
 

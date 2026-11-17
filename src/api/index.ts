@@ -7,8 +7,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import {
   AppError,
+  ERROR_CODES,
   type AppInfo,
   type CopyResult,
+  type CustomIcon,
+  type DialogText,
   type EntryDetail,
   type EntrySummary,
   type ErrorCode,
@@ -20,11 +23,14 @@ import {
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-const CODES: ErrorCode[] = ['locked', 'notFound', 'emptyPassword', 'settingsNotSaved', 'window', 'internal'];
-
 function toAppError(cmd: string, e: unknown): AppError {
   if (e instanceof AppError) return e;
-  if (e && typeof e === 'object' && 'code' in e && CODES.includes((e as { code: ErrorCode }).code)) {
+  if (
+    e &&
+    typeof e === 'object' &&
+    'code' in e &&
+    (ERROR_CODES as readonly string[]).includes((e as { code: ErrorCode }).code)
+  ) {
     return new AppError((e as { code: ErrorCode }).code);
   }
   // Not one of our error codes: the call never reached the command (missing
@@ -52,12 +58,20 @@ export const api = {
   getSettings: () => call<Settings>('get_settings'),
   setSettings: (settings: Settings) => call<Settings>('set_settings', { settings }),
   vaultStatus: () => call<VaultStatus>('vault_status'),
-  unlock: (password: string) => call<VaultStatus>('unlock', { password }),
+  selectDatabase: (path: string) => call<VaultStatus>('select_database', { path }),
+  /** null when the dialog was cancelled */
+  chooseDatabase: (text: DialogText) => call<VaultStatus | null>('choose_database', { text }),
+  chooseKeyFile: (text: DialogText) => call<string | null>('choose_key_file', { text }),
+  /** an empty password counts as none; `keyFile` is a path */
+  unlock: (password: string, keyFile: string | null) =>
+    call<VaultStatus>('unlock', { password: password || null, keyFile }),
+  forgetRecent: (path: string) => call<Settings>('forget_recent', { path }),
   lock: () => call<VaultStatus>('lock'),
   listGroups: () => call<GroupView[]>('list_groups'),
   listEntries: (groupId: string) => call<EntrySummary[]>('list_entries', { groupId }),
   searchEntries: (query: string) => call<EntrySummary[]>('search_entries', { query }),
   getEntry: (id: string) => call<EntryDetail>('get_entry', { id }),
+  getCustomIcons: () => call<CustomIcon[]>('get_custom_icons'),
   revealField: (entryId: string, key: string) => call<string>('reveal_field', { entryId, key }),
   copyField: (entryId: string, key: string) => call<CopyResult>('copy_field', { entryId, key }),
   getTotp: (entryId: string) => call<TotpView>('get_totp', { entryId }),
