@@ -15,7 +15,6 @@ import { GroupNav } from '../components/GroupNav';
 import { Icon } from '../components/Icon';
 import { Keys } from '../components/bits';
 import { TitleBar } from '../components/TitleBar';
-import { host } from '../text';
 import { usePrefs, useToast } from './contexts';
 import { sortEntries } from './sortEntries';
 
@@ -182,25 +181,19 @@ export function Workspace({ status }: { status: VaultStatus }) {
     return {
       copy: (key) => {
         if (!detail) return;
-        api.copyField(detail.id, key).then(
-          (r) => {
-            window.clearTimeout(copiedTimer.current);
-            setCopied(key);
-            copiedTimer.current = window.setTimeout(() => setCopied(null), 1400);
-            toast(
-              r.clearsAfter
-                ? {
-                    message: t('toast.copiedClears', { field: label(key), n: r.clearsAfter }),
-                    clearsAfter: r.clearsAfter,
-                  }
-                : { message: t('toast.copied', { field: label(key) }) },
-            );
-          },
-          (e: unknown) =>
-            e instanceof AppError && e.code === 'notYet'
-              ? toast({ message: t('toast.copyNotYet'), tone: 'info' })
-              : fail(e),
-        );
+        api.copyField(detail.id, key).then((r) => {
+          window.clearTimeout(copiedTimer.current);
+          setCopied(key);
+          copiedTimer.current = window.setTimeout(() => setCopied(null), 1400);
+          toast(
+            r.clearsAfter
+              ? {
+                  message: t('toast.copiedClears', { field: label(key), n: r.clearsAfter }),
+                  clearsAfter: r.clearsAfter,
+                }
+              : { message: t('toast.copied', { field: label(key) }) },
+          );
+        }, fail);
       },
       toggleReveal: (key) => {
         if (!detail) return;
@@ -220,8 +213,9 @@ export function Workspace({ status }: { status: VaultStatus }) {
           }
         }, fail);
       },
-      openUrl: () =>
-        detail?.url && toast({ message: t('toast.openUrl', { host: host(detail.url) }), tone: 'info' }),
+      openUrl: () => {
+        if (detail?.url) api.openUrl(detail.id).catch(fail);
+      },
       autotype: () => toast({ message: t('toast.autotype'), tone: 'info' }),
       edit: () => toast({ message: t('toast.edit'), tone: 'info' }),
       exportAttachment: () => toast({ message: t('toast.export'), tone: 'info' }),
@@ -375,6 +369,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
         onChange={(e) => setQuery(e.target.value)}
         placeholder={t('search.placeholder')}
         aria-label={t('search.label')}
+        title={t('search.hint')}
         spellCheck={false}
         autoComplete="off"
       />

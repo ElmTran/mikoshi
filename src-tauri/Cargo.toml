@@ -20,6 +20,21 @@ tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+url = "2"
+zeroize.workspace = true
+# Win32 for the clipboard formats and auto-lock; the version Tauri already uses
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_DataExchange",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_SystemInformation",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
 log = "0.4"
 serde.workspace = true
 serde_json.workspace = true

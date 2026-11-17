@@ -25,9 +25,10 @@ use keepass::{Database, DatabaseKey};
 use crate::Secret;
 use crate::model::{
     AttachmentView, CustomIconView, EntryDetail, EntrySummary, FieldView, GroupKind, GroupView,
-    fields,
+    TotpView, fields,
 };
-use crate::search::{Haystack, rank};
+use crate::search::{Haystack, Query};
+use crate::totp::{self, Totp, TotpError};
 
 /// Why a database could not be opened. Carries no user data, so it can be
 /// logged and shown as is.
@@ -63,29 +64,15 @@ const ICON_KEY: u32 = 0;
 const ICON_FOLDER: u32 = 48;
 const ICON_COUNT: usize = 69;
 
-/// Fields that hold a TOTP/HOTP secret. They are never listed as custom
-/// fields or revealed: the code is computed on the Rust side (features.md §6).
+/// Fields that hold TOTP settings or secrets. They are never listed as
+/// custom fields or revealed: the code is computed on the Rust side
+/// (features.md §6).
 fn is_otp_field(key: &str) -> bool {
-    key == "otp"
-        || key == "TOTP Seed"
-        || key == "TOTP Settings"
-        || key.starts_with("TimeOtp-")
-        || key.starts_with("HmacOtp-")
+    totp::is_totp_field(key)
 }
 
-/// TOTP as KeePassXC stores it (`otp`), the old KeePassXC/TrayTOTP field and
-/// KeePass 2's native fields. Generating the code is M3's job.
 fn has_totp(e: &EntryRef<'_>) -> bool {
-    [
-        "otp",
-        "TOTP Seed",
-        "TimeOtp-Secret",
-        "TimeOtp-Secret-Hex",
-        "TimeOtp-Secret-Base32",
-        "TimeOtp-Secret-Base64",
-    ]
-    .iter()
-    .any(|k| e.get(k).is_some_and(|v| !v.trim().is_empty()))
+    totp::has_totp(|k| e.get(k))
 }
 
 fn is_standard_field(key: &str) -> bool {
@@ -418,9 +405,11 @@ impl Vault {
     }
 
     /// Searches everything outside the recycle bin and the groups that turn
-    /// searching off (features.md §3.4). Best match first, then newest.
+    /// searching off (features.md §3.4). Best match first, then newest. The
+    /// query syntax (field prefixes, fuzzy matching) is in [`crate::search`].
     pub fn search(&self, query: &str) -> Vec<EntrySummary> {
-        let mut hits: Vec<(u8, EntrySummary)> = Vec::new();
+        let query = Query::parse(query);
+        let mut hits: Vec<(u32, EntrySummary)> = Vec::new();
         for (i, node) in self.groups.iter().enumerate() {
             if node.in_bin || !node.searchable {
                 continue;
@@ -436,7 +425,7 @@ impl Vault {
                     notes: e.get(fields::NOTES).unwrap_or_default(),
                     tags: &e.tags,
                 };
-                if let Some(r) = rank(query, &h) {
+                if let Some(r) = query.rank(&h) {
                     hits.push((r, self.summary(&e, i)));
                 }
             }
@@ -538,6 +527,38 @@ impl Vault {
 
     pub fn has_totp(&self, id: &str) -> Option<bool> {
         self.entry_ref(id).map(|(e, _)| has_totp(&e))
+    }
+
+    /// The current TOTP code. `None` when there is no such entry.
+    pub fn totp(&self, id: &str) -> Option<Result<TotpView, TotpError>> {
+        let (e, _) = self.entry_ref(id)?;
+        Some(Totp::from_fields(|k| e.get(k)).map(|t| {
+            let c = t.now();
+            TotpView {
+                code: c.code,
+                period: c.period,
+                remaining: c.remaining,
+            }
+        }))
+    }
+
+    /// What copying a field puts on the clipboard, and whether it is a
+    /// secret (cleared after a while, kept out of clipboard history). `@totp`
+    /// is the current code. `None` when the entry or field does not exist.
+    pub fn copy_value(&self, id: &str, key: &str) -> Option<Result<(Secret, bool), TotpError>> {
+        if key == fields::TOTP {
+            return self
+                .totp(id)
+                .map(|r| r.map(|t| (Secret::new(t.code), true)));
+        }
+        let secret = self.is_secret_field(id, key)?;
+        Some(Ok((self.field(id, key)?, secret)))
+    }
+
+    /// The entry's URL, for opening in a browser.
+    pub fn url(&self, id: &str) -> Option<String> {
+        let (e, _) = self.entry_ref(id)?;
+        Some(e.get(fields::URL).unwrap_or_default().trim().to_string())
     }
 
     pub fn custom_icons(&self) -> Vec<CustomIconView> {
@@ -740,6 +761,41 @@ mod tests {
             assert!(d.fields.iter().all(|f| !is_otp_field(&f.key)));
             assert!(v.field(&s.id, "otp").is_none());
         }
+    }
+
+    #[test]
+    fn computes_totp_for_every_fixture_format() {
+        // otpauth with defaults, SHA-256 + 8 digits + 60 s, lower-case and
+        // unpadded secrets, KeePass 2 native fields: all readable since M3
+        let v = open_ok();
+        let totp: Vec<EntrySummary> = v.search("").into_iter().filter(|e| e.has_totp).collect();
+        assert!(totp.len() >= 6, "the fixture has six TOTP formats");
+        for s in &totp {
+            let code = v
+                .totp(&s.id)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{}: {e:?}", s.title));
+            assert!(code.code.len() == 6 || code.code.len() == 8, "{}", s.title);
+            assert!(code.code.bytes().all(|b| b.is_ascii_digit()));
+            assert!(code.remaining >= 1 && code.remaining <= code.period);
+            let (copied, secret) = v.copy_value(&s.id, fields::TOTP).unwrap().unwrap();
+            assert!(secret);
+            assert_eq!(copied.expose().len(), code.code.len());
+        }
+        let plain = v.search("").into_iter().find(|e| !e.has_totp).unwrap();
+        assert_eq!(v.totp(&plain.id).unwrap().unwrap_err(), TotpError::Missing);
+    }
+
+    #[test]
+    fn copy_values_know_what_is_secret() {
+        let v = open_ok();
+        let s = v.search("Full Fields").into_iter().next().unwrap();
+        let (pw, secret) = v.copy_value(&s.id, fields::PASSWORD).unwrap().unwrap();
+        assert!(secret && !pw.is_empty());
+        let (_, secret) = v.copy_value(&s.id, fields::USERNAME).unwrap().unwrap();
+        assert!(!secret);
+        assert!(v.copy_value(&s.id, "no such field").is_none());
+        assert!(v.url(&s.id).is_some_and(|u| u.contains("example.com")));
     }
 
     #[test]

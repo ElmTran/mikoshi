@@ -1420,3 +1420,37 @@
   font-size: var(--fs-caption);
   color: var(--text-2);
 }
+
+/* ---------------------------------------------------------------- M3: settings selects */
+
+.select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+}
+.select-row + .select-row,
+.select-row + .switch-row,
+.switch-row + .switch-row {
+  margin-top: 8px;
+}
+.select {
+  height: 30px;
+  min-width: 108px;
+  padding: 0 8px;
+  border-radius: var(--r-control);
+  background: var(--control);
+  border: 1px solid var(--control-stroke);
+  border-bottom-color: var(--control-stroke-bottom);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.select:hover {
+  background: var(--control-hover);
+}
+.select option {
+  background: var(--flyout);
+  color: var(--text);
+}

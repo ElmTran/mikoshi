@@ -4,15 +4,18 @@
 use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 
-use mikoshi_core::model::{CustomIconView, EntryDetail, EntrySummary, GroupView, TotpView, fields};
+use mikoshi_core::model::{CustomIconView, EntryDetail, EntrySummary, GroupView, TotpView};
+use mikoshi_core::totp::TotpError;
 use mikoshi_core::{Credentials, Secret, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::AppState;
+use crate::clipboard;
 use crate::error::{AppError, AppResult};
-use crate::session::{Session, VaultStatus};
+use crate::session::{self, Session, VaultStatus};
 use crate::settings::{Settings, Store};
 use crate::windows;
 
@@ -28,8 +31,6 @@ pub struct AppInfo {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-// Built again in M3, when copying reaches the clipboard.
-#[allow(dead_code)]
 pub struct CopyResult {
     /// seconds until the clipboard is cleared; `None` for non-secret fields
     pub clears_after: Option<u32>,
@@ -54,12 +55,7 @@ fn settings<'a>(state: &'a State<'_, AppState>) -> AppResult<MutexGuard<'a, Stor
 
 /// Never holds both locks at once.
 fn status_of(state: &State<'_, AppState>) -> AppResult<VaultStatus> {
-    let current = session(state)?.current.clone();
-    let key_file = match current {
-        Some(p) => settings(state)?.current.key_file_for(&p.to_string_lossy()),
-        None => None,
-    };
-    Ok(session(state)?.status(key_file))
+    session::status_of(state).ok_or(AppError::Internal)
 }
 
 fn announce(app: &AppHandle, state: &State<'_, AppState>) -> AppResult<VaultStatus> {
@@ -254,9 +250,8 @@ pub async fn unlock(
 /// unlock form and forgets what it showed.
 #[tauri::command]
 pub fn lock(app: AppHandle, state: State<'_, AppState>) -> AppResult<VaultStatus> {
-    session(&state)?.lock();
-    log::info!("database locked");
-    announce(&app, &state)
+    session::lock_app(&app, "by the user");
+    status_of(&state)
 }
 
 /// Removes a file from the recent list (the file itself is not touched).
@@ -322,29 +317,72 @@ pub fn reveal_field(
     read(&state, |v| v.field(&entry_id, &key)).map(|s| s.expose().to_string())
 }
 
-/// Copies a field without sending it to the frontend. The clipboard (with
-/// the history and cloud exclusions and the timed clear, features.md §3.5)
-/// arrives in M3; until then this only checks that the field exists.
+fn totp_error(e: TotpError) -> AppError {
+    match e {
+        TotpError::Missing => AppError::NotFound,
+        TotpError::Invalid => AppError::TotpInvalid,
+    }
+}
+
+/// Copies a field (or `@totp`, the current code) without sending it to the
+/// frontend. Secrets stay out of clipboard history and are cleared after the
+/// configured time (features.md §3.5); see clipboard.rs.
 #[tauri::command]
 pub fn copy_field(
+    app: AppHandle,
     state: State<'_, AppState>,
     entry_id: String,
     key: String,
 ) -> AppResult<CopyResult> {
-    if key == fields::TOTP {
-        read(&state, |v| v.has_totp(&entry_id).filter(|&t| t))?;
-    } else {
-        read(&state, |v| v.is_secret_field(&entry_id, &key))?;
+    let (value, secret) = read(&state, |v| v.copy_value(&entry_id, &key))?.map_err(totp_error)?;
+    if value.is_empty() {
+        // nothing to copy; leave whatever is on the clipboard alone
+        return Err(AppError::NotFound);
     }
-    Err(AppError::NotYet)
+    let seconds = settings(&state)?.current.clipboard_clear_seconds;
+    let clears_after = (secret && seconds > 0).then_some(seconds);
+    clipboard::copy(&app, &value, secret, clears_after)?;
+    Ok(CopyResult { clears_after })
 }
 
-/// TOTP codes are computed in M3 (the code parses otpauth URIs itself, see
-/// M0 issues K3 and K4).
+/// The current TOTP code, computed here; the secret never leaves Rust.
 #[tauri::command]
 pub fn get_totp(state: State<'_, AppState>, entry_id: String) -> AppResult<TotpView> {
-    read(&state, |v| v.has_totp(&entry_id).filter(|&t| t))?;
-    Err(AppError::NotYet)
+    read(&state, |v| v.totp(&entry_id))?.map_err(totp_error)
+}
+
+/// The URL to open for what an entry stores: only http and https. A bare
+/// host gets `https://`. KeePass also allows `cmd://` and the like; those
+/// run programs, so they are refused.
+fn safe_url(raw: &str) -> Option<url::Url> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.chars().any(char::is_control) {
+        return None;
+    }
+    let candidate = if raw.contains("://") {
+        raw.to_string()
+    } else {
+        format!("https://{raw}")
+    };
+    let url = url::Url::parse(&candidate).ok()?;
+    (matches!(url.scheme(), "http" | "https") && url.host().is_some()).then_some(url)
+}
+
+/// Opens the entry's URL in the default browser.
+#[tauri::command]
+pub fn open_url(app: AppHandle, state: State<'_, AppState>, entry_id: String) -> AppResult<()> {
+    let raw = read(&state, |v| v.url(&entry_id))?;
+    if raw.is_empty() {
+        return Err(AppError::NotFound);
+    }
+    let url = safe_url(&raw).ok_or(AppError::UnsafeUrl)?;
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|_| {
+            // no details: they would contain the URL
+            log::warn!("the browser could not be started");
+            AppError::Internal
+        })
 }
 
 #[tauri::command]
@@ -361,4 +399,35 @@ pub fn hide_quick_search(app: AppHandle) -> AppResult<()> {
         log::error!("cannot hide quick search: {e}");
         AppError::Window
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_url;
+
+    #[test]
+    fn opens_only_web_urls() {
+        let ok = |s: &str| safe_url(s).map(|u| u.to_string());
+        assert_eq!(
+            ok("https://github.com/login").as_deref(),
+            Some("https://github.com/login")
+        );
+        assert_eq!(
+            ok("http://192.168.1.1").as_deref(),
+            Some("http://192.168.1.1/")
+        );
+        assert_eq!(ok("  www.jd.com ").as_deref(), Some("https://www.jd.com/"));
+        for bad in [
+            "",
+            "   ",
+            "cmd://calc.exe",
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+            "ftp://example.com",
+            "https://exa\nmple.com",
+            "https://",
+        ] {
+            assert!(safe_url(bad).is_none(), "{bad:?}");
+        }
+    }
 }

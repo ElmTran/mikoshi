@@ -4,6 +4,7 @@
 pub mod model;
 pub mod search;
 pub mod secret;
+pub mod totp;
 pub mod vault;
 
 pub use secret::Secret;

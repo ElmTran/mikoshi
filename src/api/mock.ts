@@ -320,9 +320,23 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
         return field(find(a.entryId ?? ''), a.key ?? '');
       case 'copy_field': {
         const e = find(a.entryId ?? '');
-        field(e, a.key ?? '');
-        // like the app until M3: copying does not reach the clipboard yet
-        throw new AppError('notYet');
+        const key = a.key ?? '';
+        if (key === '@totp' && !e.otp) throw new AppError('notFound');
+        const value = field(e, key);
+        if (!value) throw new AppError('notFound');
+        // a browser page may write the clipboard only on a user gesture;
+        // good enough for UI work
+        void navigator.clipboard?.writeText(value).catch(() => {});
+        const secret =
+          key === 'Password' || key === '@totp' || Boolean(e.fields?.find((f) => f.key === key)?.protected);
+        const seconds = loadSettings().clipboardClearSeconds;
+        return { clearsAfter: secret && seconds > 0 ? seconds : null };
+      }
+      case 'open_url': {
+        const e = find(a.entryId ?? '');
+        if (!/^https?:\/\//i.test(e.url)) throw new AppError('unsafeUrl');
+        window.open(e.url, '_blank', 'noopener');
+        return null;
       }
       case 'get_totp': {
         const e = find(a.entryId ?? '');

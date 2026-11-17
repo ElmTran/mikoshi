@@ -57,8 +57,9 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 | `get_entry` | 条目详情（不含秘密） | ✓ | |
 | `get_custom_icons` | 库里的自定义图标（图片数据） | ✓ | ✓ |
 | `reveal_field` | 取一个字段的明文 | ✓ | |
-| `copy_field` | 复制一个字段（M3 接入剪贴板，之前返回 `notYet`） | ✓ | ✓ |
-| `get_totp` | 当前验证码和剩余秒数（M3 接入，之前返回 `notYet`） | ✓ | |
+| `copy_field` | 复制一个字段或当前验证码（`@totp`），见"剪贴板" | ✓ | ✓ |
+| `get_totp` | 当前验证码和剩余秒数 | ✓ | |
+| `open_url` | 用默认浏览器打开条目的网址（只限 http 和 https） | ✓ | |
 | `show_quick_search` | 显示快速搜索框 | ✓ | |
 | `hide_quick_search` | 隐藏快速搜索框 | | ✓ |
 
@@ -78,7 +79,38 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 命令失败时只返回一个错误码，例如 `{"code": "locked"}`，前端按当前语言显示对应的文案（`error.locked` 等）。错误里**不带任何用户数据**，所以可以放心写进日志或显示出来。错误码定义在 `src-tauri/src/error.rs`，前端的对应类型在 `src/api/types.ts`。
 
-解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`wrongKeyOrCorrupt`（KDBX 3.1）、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。`notYet` 表示功能在后面的里程碑接入。
+解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`wrongKeyOrCorrupt`（KDBX 3.1）、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`notYet`（功能在后面的里程碑接入）。
+
+### 剪贴板
+
+`src-tauri/src/clipboard.rs`，直接调 Win32 剪贴板。
+
+- **秘密**（密码、受保护的自定义字段、验证码）：同时写入 `ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory`（DWORD 0）、`CanUploadToCloudClipboard`（DWORD 0），不进 Win+V 历史和云剪贴板。写不进这几种格式就整个放弃，不会留下没有保护的密码
+- 秘密复制后按 `clipboardClearSeconds` 清除；锁定和退出时也清除
+- **只清我们放的内容**：复制后记下剪贴板序列号（Windows 每次改动剪贴板都会加一），清除时序列号没变才清，用户之后自己复制的东西不会被误清
+- 用户名、网址等非秘密字段按普通文本复制，不定时清除（M1 定下的约定，见 `CopyResult`）
+- 剪贴板被别的程序占着时重试约 150 毫秒，还不行就报 `clipboard`
+
+### TOTP
+
+`crates/mikoshi-core/src/totp.rs` 自己实现 RFC 6238，不用 keepass-rs 的（M0 的 K3、K4）。按 KeePassXC 的顺序读三种存法：`otp` 字段（`otpauth://` URI，或 KeeOtp 的 `key=…&step=…&size=…`）、KeePass 2 原生字段（`TimeOtp-Secret[-Hex|-Base32|-Base64]` 等）、老的 `TOTP Seed` + `TOTP Settings`。支持 SHA-1/256/512、4–10 位、任意周期，以及 Steam 验证码（`encoder=steam`、issuer 为 Steam，或 `TOTP Settings` 里的 `S`）。Base32 不区分大小写，空格、连字符和补齐的 `=` 都忽略。验证码只在 Rust 端算，前端只拿到码和剩余秒数。
+
+### 搜索语法
+
+`crates/mikoshi-core/src/search.rs`。空格分开的每个词都要匹配；`title:` `user:` `url:` `tag:` 把一个词限定在某个字段；引号让词里可以有空格（`title:"my bank"`）。每个词先按子串找，找不到再模糊匹配（字母按顺序出现、中间隔得不多，`gthb` 能找到 GitHub）。排序：标题开头 > 标题包含 > 用户名 > 网址 > 标签 > 备注 > 模糊匹配。前端 `src/text.ts` 的 `searchTerms` 用同样的规则拆词，用来高亮。
+
+### 自动锁定
+
+`src-tauri/src/autolock.rs`，所有锁定都走 `session::lock_app`：丢掉解锁的库、清掉剪贴板里我们复制的秘密、通知所有窗口。
+
+- 空闲：每 2 秒用 `GetLastInputInfo` 查一次全局（不只是 Mikoshi）的键盘鼠标空闲时间，超过 `idleLockMinutes` 就锁定
+- Win+L：一个隐藏的顶层窗口注册 `WTSRegisterSessionNotification`，收到 `WTS_SESSION_LOCK` 就锁定
+- 睡眠和休眠：同一个窗口收到 `WM_POWERBROADCAST` 的 `PBT_APMSUSPEND` 就锁定（只有顶层窗口收得到这个广播，所以不用 message-only 窗口）
+- 最小化（可选，默认关）：主窗口的 `Resized` 事件里检查是否最小化
+
+### 打开网址
+
+`open_url` 在 Rust 端取条目的网址：没有协议的补上 `https://`，解析后必须是 http 或 https 且有主机名，否则报 `unsafeUrl`。KeePass 允许的 `cmd://` 之类会运行程序，一律拒绝。用 tauri-plugin-opener 交给默认浏览器；日志里不写网址。
 
 ## 安全基线
 
@@ -113,8 +145,11 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
   - `recent`：最近打开的库，最新的在前，最多 10 个。每项是 `path`，加上上次用的密钥文件路径 `keyFile`（只存路径）。启动时自动选中第一个
   - `rememberKeyFiles`：是否记住密钥文件路径，默认开。关掉时清空已经记住的路径
   - `entrySort`：条目列表的排序（`key` 是 `title` / `username` / `url` / `modified`，`desc` 是否倒序），默认按修改时间倒序
+  - `clipboardClearSeconds`：复制的秘密多少秒后清除，默认 10，0 表示不清除
+  - `idleLockMinutes`：全局无操作多少分钟后锁定，默认 5，0 表示不锁定
+  - `lockOnMinimize`：主窗口最小化时锁定，默认关
 - `recent` 由 Rust 端维护：解锁成功时更新，`forget_recent` 删除。`set_settings` 收到的 `recent` 会被忽略，免得某个窗口拿着旧列表把新列表覆盖掉
-- **只放非敏感信息。** 之后会加热键、各种时长
+- **只放非敏感信息。** 之后会加热键
 - 写入方式：先写临时文件再改名，中途崩溃不会留下半截文件
 - 文件损坏或缺字段时用默认值，不认识的字段忽略，所以新旧版本可以互相读
 - 日志在 `%LOCALAPPDATA%\com.elmtran.mikoshi\logs\`

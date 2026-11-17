@@ -1,3 +1,5 @@
+mod autolock;
+mod clipboard;
 mod commands;
 mod error;
 mod session;
@@ -7,12 +9,14 @@ mod windows;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
 pub struct AppState {
     pub settings: Mutex<settings::Store>,
     pub vault: Mutex<session::Session>,
+    /// what we last put on the clipboard, to clear it again safely
+    pub clipboard: clipboard::Tracker,
     /// the main window has the Mica backdrop, so its page must stay transparent
     pub effects: bool,
 }
@@ -47,6 +51,7 @@ pub fn run() {
             windows::focus_main(app)
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(if cfg!(debug_assertions) {
@@ -75,9 +80,11 @@ pub fn run() {
             app.manage(AppState {
                 settings: Mutex::new(store),
                 vault: Mutex::new(session::Session::new(last)),
+                clipboard: clipboard::Tracker::default(),
                 effects,
             });
             windows::create_all(app.handle())?;
+            autolock::start(app.handle());
 
             log::info!(
                 "Mikoshi {} started (window effects: {effects})",
@@ -87,11 +94,25 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Until the tray arrives in M4, closing the main window quits.
-            if window.label() == "main"
-                && let WindowEvent::CloseRequested { .. } = event
-            {
-                window.app_handle().exit(0);
+            if window.label() != "main" {
+                return;
+            }
+            match event {
+                // Until the tray arrives in M4, closing the main window quits.
+                WindowEvent::CloseRequested { .. } => window.app_handle().exit(0),
+                // optional: lock when minimized (features.md §3.2)
+                WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
+                    let app = window.app_handle();
+                    let on = app
+                        .state::<AppState>()
+                        .settings
+                        .lock()
+                        .is_ok_and(|s| s.current.lock_on_minimize);
+                    if on {
+                        session::lock_app(app, "minimized");
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -113,9 +134,16 @@ pub fn run() {
             commands::reveal_field,
             commands::copy_field,
             commands::get_totp,
+            commands::open_url,
             commands::show_quick_search,
             commands::hide_quick_search,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Mikoshi");
+        .build(tauri::generate_context!())
+        .expect("error while starting Mikoshi")
+        .run(|app, event| {
+            // a copied password must not outlive the program (features.md §3.5)
+            if let RunEvent::Exit = event {
+                clipboard::clear_secret(app);
+            }
+        });
 }

@@ -1,27 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { api, isTauri, listen } from '../api';
 import { AppError, Field, type EntrySummary, type VaultStatus } from '../api/types';
 import { appWindow } from '../api/window';
 import { EntryIcon, Keys } from '../components/bits';
 import { Icon } from '../components/Icon';
 import { UnlockForm } from '../components/Unlock';
-import { host } from '../text';
+import { Highlight } from '../components/Highlight';
+import { host, searchTerms } from '../text';
 import { usePrefs } from './contexts';
 import { CustomIconsProvider } from './CustomIcons';
 
 type Action = 'password' | 'username' | 'totp' | 'autotype';
-
-function Highlight({ text, query }: { text: string; query: string }) {
-  const i = query ? text.toLowerCase().indexOf(query.toLowerCase()) : -1;
-  if (i < 0) return <>{text}</>;
-  return (
-    <>
-      {text.slice(0, i)}
-      <mark>{text.slice(i, i + query.length)}</mark>
-      {text.slice(i + query.length)}
-    </>
-  );
-}
 
 /** The quick search box (its own borderless window). */
 export function QuickApp() {
@@ -63,6 +52,7 @@ export function QuickApp() {
   }, [hide]);
 
   const q = query.trim();
+  const terms = useMemo(() => searchTerms(q), [q]);
   const unlocked = status !== null && !status.locked;
   useEffect(() => {
     if (!unlocked) return;
@@ -102,10 +92,7 @@ export function QuickApp() {
       (err: unknown) =>
         setFlash({
           id: e.id,
-          text:
-            err instanceof AppError && err.code === 'notYet'
-              ? t('toast.copyNotYet')
-              : t(`error.${err instanceof AppError ? err.code : 'internal'}`),
+          text: t(`error.${err instanceof AppError ? err.code : 'internal'}`),
           ok: false,
         }),
     );
@@ -163,12 +150,9 @@ export function QuickApp() {
               {!q && results.length > 0 && <div className="qs-caption">{t('quick.recent')}</div>}
               <div className="qs-results" role="listbox">
                 {results.map((e, i) => {
-                  const sub =
-                    q &&
-                    !e.username.toLowerCase().includes(q.toLowerCase()) &&
-                    e.url.toLowerCase().includes(q.toLowerCase())
-                      ? host(e.url)
-                      : e.username;
+                  // show the site instead of the user name when that is what matched
+                  const hits = (s: string) => terms.some((w) => s.toLowerCase().includes(w.toLowerCase()));
+                  const sub = terms.length && !hits(e.username) && hits(e.url) ? host(e.url) : e.username;
                   const flashing = flash?.id === e.id ? flash : null;
                   return (
                     <div
@@ -182,10 +166,10 @@ export function QuickApp() {
                       <EntryIcon icon={e.icon} customIcon={e.customIcon} title={e.title} />
                       <span className="qr-main">
                         <span className="qr-title">
-                          <Highlight text={e.title} query={q} />
+                          <Highlight text={e.title} terms={terms} />
                         </span>
                         <span className="qr-sub">
-                          <Highlight text={sub} query={q} />
+                          <Highlight text={sub} terms={terms} />
                         </span>
                       </span>
                       {flashing ? (

@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { usePrefs } from '../app/contexts';
 import type { EntrySort, EntrySummary, SortKey } from '../api/types';
 import { EntryIcon } from './bits';
 import { Icon } from './Icon';
 import { useDismiss } from './useDismiss';
 import { useSlidingIndicator } from './useSlidingIndicator';
-import { host } from '../text';
+import { host, searchTerms } from '../text';
+import { Highlight } from './Highlight';
 
 const SORT_KEYS: SortKey[] = ['title', 'username', 'url', 'modified'];
 
@@ -20,19 +21,6 @@ interface Props {
   onNew: () => void;
   /** the list takes keyboard focus as a whole; Workspace moves the selection */
   listRef: RefObject<HTMLElement | null>;
-}
-
-function Highlight({ text, query }: { text: string; query: string }) {
-  const q = query.trim();
-  const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
-  if (i < 0) return <>{text}</>;
-  return (
-    <>
-      {text.slice(0, i)}
-      <mark>{text.slice(i, i + q.length)}</mark>
-      {text.slice(i + q.length)}
-    </>
-  );
 }
 
 /** "Sort by" button and menu. Picking the current key again flips the order. */
@@ -112,6 +100,7 @@ export function EntryList({
   listRef,
 }: Props) {
   const { t, tn, fmt } = usePrefs();
+  const terms = useMemo(() => searchTerms(query), [query]);
   const indicator = useSlidingIndicator(listRef, '.row.on', [selected, entries]);
 
   useEffect(() => {
@@ -160,16 +149,16 @@ export function EntryList({
               <EntryIcon icon={e.icon} customIcon={e.customIcon} title={e.title} />
               <span className="row-title">
                 <span className="row-title-text">
-                  <Highlight text={e.title} query={query} />
+                  <Highlight text={e.title} terms={terms} />
                 </span>
                 {e.expired && <span className="badge danger">{t('list.expired')}</span>}
               </span>
               <span className="row-user">
-                <Highlight text={e.username} query={query} />
+                <Highlight text={e.username} terms={terms} />
                 {e.username && site && <span className="row-sep"> · </span>}
                 {site && (
                   <span className="row-host">
-                    <Highlight text={site} query={query} />
+                    <Highlight text={site} terms={terms} />
                   </span>
                 )}
               </span>

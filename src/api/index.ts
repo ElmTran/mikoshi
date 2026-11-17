@@ -75,6 +75,8 @@ export const api = {
   revealField: (entryId: string, key: string) => call<string>('reveal_field', { entryId, key }),
   copyField: (entryId: string, key: string) => call<CopyResult>('copy_field', { entryId, key }),
   getTotp: (entryId: string) => call<TotpView>('get_totp', { entryId }),
+  /** opens the entry's URL in the default browser (http and https only) */
+  openUrl: (entryId: string) => call<void>('open_url', { entryId }),
   showQuickSearch: () => call<void>('show_quick_search'),
   hideQuickSearch: () => call<void>('hide_quick_search'),
 };

@@ -10,10 +10,39 @@ const THEMES: { value: ThemePref; icon: IconName }[] = [
   { value: 'dark', icon: 'moon' },
 ];
 const LANGUAGES: LanguagePref[] = ['system', 'zh-CN', 'en-US'];
+// 0 means never
+const IDLE_MINUTES = [1, 2, 5, 10, 15, 30, 60, 0];
+const CLEAR_SECONDS = [5, 10, 20, 30, 60, 0];
 
-/** Small flyout under the title bar: appearance, language, unlock options. */
+/** The offered choices, plus the current value if it is not one of them. */
+const withCurrent = (choices: number[], current: number) =>
+  choices.includes(current) ? choices : [...choices, current].sort((a, b) => (a || 1e9) - (b || 1e9));
+
+function Switch({
+  on,
+  label,
+  hint,
+  onToggle,
+}: {
+  on: boolean;
+  label: string;
+  hint: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button type="button" role="switch" aria-checked={on} className="switch-row" onClick={onToggle}>
+      <span className="switch-text">
+        <span>{label}</span>
+        <span className="switch-hint">{hint}</span>
+      </span>
+      <span className={on ? 'switch on' : 'switch'} aria-hidden="true" />
+    </button>
+  );
+}
+
+/** Small flyout under the title bar: appearance, language, security. */
 export function SettingsButton() {
-  const { t, settings, update, info } = usePrefs();
+  const { t, tn, settings, update, info } = usePrefs();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -73,19 +102,47 @@ export function SettingsButton() {
             </div>
           </div>
           <div className="flyout-section">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={settings.rememberKeyFiles}
-              className="switch-row"
-              onClick={() => void update({ rememberKeyFiles: !settings.rememberKeyFiles })}
-            >
-              <span className="switch-text">
-                <span>{t('settings.rememberKeyFiles')}</span>
-                <span className="switch-hint">{t('settings.rememberKeyFilesHint')}</span>
-              </span>
-              <span className={settings.rememberKeyFiles ? 'switch on' : 'switch'} aria-hidden="true" />
-            </button>
+            <div className="flyout-label">{t('settings.security')}</div>
+            <label className="select-row">
+              <span>{t('settings.idleLock')}</span>
+              <select
+                className="select"
+                value={settings.idleLockMinutes}
+                onChange={(e) => void update({ idleLockMinutes: Number(e.target.value) })}
+              >
+                {withCurrent(IDLE_MINUTES, settings.idleLockMinutes).map((m) => (
+                  <option key={m} value={m}>
+                    {m === 0 ? t('settings.never') : tn('settings.minutes', m)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="select-row">
+              <span>{t('settings.clipboardClear')}</span>
+              <select
+                className="select"
+                value={settings.clipboardClearSeconds}
+                onChange={(e) => void update({ clipboardClearSeconds: Number(e.target.value) })}
+              >
+                {withCurrent(CLEAR_SECONDS, settings.clipboardClearSeconds).map((s) => (
+                  <option key={s} value={s}>
+                    {s === 0 ? t('settings.never') : tn('settings.seconds', s)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Switch
+              on={settings.lockOnMinimize}
+              label={t('settings.lockOnMinimize')}
+              hint={t('settings.lockOnMinimizeHint')}
+              onToggle={() => void update({ lockOnMinimize: !settings.lockOnMinimize })}
+            />
+            <Switch
+              on={settings.rememberKeyFiles}
+              label={t('settings.rememberKeyFiles')}
+              hint={t('settings.rememberKeyFilesHint')}
+              onToggle={() => void update({ rememberKeyFiles: !settings.rememberKeyFiles })}
+            />
           </div>
           {info && <div className="flyout-foot">{t('settings.version', { v: info.version })}</div>}
         </div>

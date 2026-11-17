@@ -28,8 +28,8 @@ const MASK = '••••••••••••'; // fixed length: never hint
 function Totp({ entryId }: { entryId: string }) {
   const { t } = usePrefs();
   const [totp, setTotp] = useState<TotpView | null>(null);
-  // codes are computed from M3 on; until then the row says so
-  const [notYet, setNotYet] = useState(false);
+  // the entry has TOTP settings that cannot be used
+  const [invalid, setInvalid] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -45,7 +45,7 @@ function Totp({ entryId }: { entryId: string }) {
         (e: unknown) => {
           if (!live) return;
           setTotp(null);
-          setNotYet(e instanceof AppError && e.code === 'notYet');
+          setInvalid(e instanceof AppError && e.code === 'totpInvalid');
         },
       );
     void load();
@@ -60,12 +60,14 @@ function Totp({ entryId }: { entryId: string }) {
     };
   }, [entryId]);
 
-  if (!totp) return <span className="muted">{notYet ? t('totp.notYet') : '······'}</span>;
+  if (!totp) return <span className="muted">{invalid ? t('totp.invalid') : '······'}</span>;
   const low = totp.remaining <= 5;
   return (
     <span className={low ? 'totp low' : 'totp'}>
       <span className="totp-code">
-        {totp.code.slice(0, 3)} {totp.code.slice(3)}
+        {totp.code.length >= 6
+          ? `${totp.code.slice(0, totp.code.length / 2)} ${totp.code.slice(totp.code.length / 2)}`
+          : totp.code}
       </span>
       <span className="ring" style={{ ['--p' as string]: totp.remaining / totp.period }} />
       <span className="totp-left">{t('totp.remaining', { n: totp.remaining })}</span>

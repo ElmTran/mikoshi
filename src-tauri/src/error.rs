@@ -36,6 +36,12 @@ pub enum AppError {
     KeePass1,
     #[error("not a KeePass database")]
     NotKeePass,
+    #[error("the TOTP settings of this entry cannot be used")]
+    TotpInvalid,
+    #[error("only http and https URLs are opened")]
+    UnsafeUrl,
+    #[error("the clipboard could not be written")]
+    Clipboard,
     /// a feature that arrives in a later milestone
     #[error("not available yet")]
     NotYet,

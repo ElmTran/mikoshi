@@ -80,6 +80,12 @@ pub struct Settings {
     pub recent: Vec<RecentFile>,
     pub remember_key_files: bool,
     pub entry_sort: EntrySort,
+    /// seconds until a copied secret leaves the clipboard; 0 = never
+    pub clipboard_clear_seconds: u32,
+    /// minutes without keyboard or mouse input (anywhere) before locking;
+    /// 0 = never
+    pub idle_lock_minutes: u32,
+    pub lock_on_minimize: bool,
 }
 
 impl Default for Settings {
@@ -90,6 +96,10 @@ impl Default for Settings {
             recent: Vec::new(),
             remember_key_files: true,
             entry_sort: EntrySort::default(),
+            // features.md §3.5 and §3.2
+            clipboard_clear_seconds: 10,
+            idle_lock_minutes: 5,
+            lock_on_minimize: false,
         }
     }
 }
@@ -250,6 +260,9 @@ mod tests {
         assert_eq!(s.language, LanguagePref::System);
         assert!(s.remember_key_files);
         assert_eq!(s.entry_sort, EntrySort::default());
+        assert_eq!(s.clipboard_clear_seconds, 10);
+        assert_eq!(s.idle_lock_minutes, 5);
+        assert!(!s.lock_on_minimize);
         let _ = fs::remove_dir_all(&dir);
     }
 

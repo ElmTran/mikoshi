@@ -30,6 +30,7 @@
     "allow-reveal-field",
     "allow-copy-field",
     "allow-get-totp",
+    "allow-open-url",
     "allow-show-quick-search"
   ]
 }

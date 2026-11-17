@@ -130,6 +130,11 @@ export interface Settings {
   recent: RecentFile[];
   rememberKeyFiles: boolean;
   entrySort: EntrySort;
+  /** seconds until a copied secret is cleared; 0 = never */
+  clipboardClearSeconds: number;
+  /** minutes without input anywhere before locking; 0 = never */
+  idleLockMinutes: number;
+  lockOnMinimize: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -138,6 +143,9 @@ export const DEFAULT_SETTINGS: Settings = {
   recent: [],
   rememberKeyFiles: true,
   entrySort: { key: 'modified', desc: true },
+  clipboardClearSeconds: 10,
+  idleLockMinutes: 5,
+  lockOnMinimize: false,
 };
 
 /** KeePass field keys, plus the pseudo-field for the current TOTP code. */
@@ -164,6 +172,9 @@ export const ERROR_CODES = [
   'unsupported',
   'keePass1',
   'notKeePass',
+  'totpInvalid',
+  'unsafeUrl',
+  'clipboard',
   'notYet',
   'settingsNotSaved',
   'window',

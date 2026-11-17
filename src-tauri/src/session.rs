@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use mikoshi_core::Vault;
 use mikoshi_core::vault::file_stem;
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::AppState;
 
 /// What every window needs to know about the database. Paths are not
 /// secret; nothing from inside the database is here except its name.
@@ -57,6 +60,43 @@ impl Session {
                 (None, None) => String::new(),
             },
             key_file,
+        }
+    }
+}
+
+/// The status every window shows. Never holds both locks at once.
+pub fn status_of(state: &AppState) -> Option<VaultStatus> {
+    let current = state.vault.lock().ok()?.current.clone();
+    let key_file = match current {
+        Some(p) => state
+            .settings
+            .lock()
+            .ok()?
+            .current
+            .key_file_for(&p.to_string_lossy()),
+        None => None,
+    };
+    Some(state.vault.lock().ok()?.status(key_file))
+}
+
+/// Locks: drops the decrypted database, removes a copied secret from the
+/// clipboard if it is still there, and tells every window. Used by the lock
+/// command and by auto-lock (idle, Win+L, sleep, minimize).
+pub fn lock_app(app: &AppHandle, reason: &str) {
+    let state = app.state::<AppState>();
+    let was_open = match state.vault.lock() {
+        Ok(mut s) => {
+            let open = s.open.is_some();
+            s.lock();
+            open
+        }
+        Err(_) => false,
+    };
+    crate::clipboard::clear_secret(app);
+    if was_open {
+        log::info!("database locked ({reason})");
+        if let Some(status) = status_of(&state) {
+            let _ = app.emit("vault-changed", &status);
         }
     }
 }

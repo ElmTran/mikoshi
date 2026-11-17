@@ -3,7 +3,7 @@
 一个 Windows 密码管理器，界面现代，以快捷键为中心，直接读写 KeePass 的 `.kdbx` 数据库。
 
 - 技术栈：Tauri 2 + React + TypeScript，后端是 Rust，用 [keepass-rs](https://github.com/sseemayer/keepass-rs) 读写库文件
-- 当前阶段：M2（打开、解锁、只读浏览）已完成，下一步是 M3（搜索、复制、TOTP、自动锁定）。现在能打开真实的 `.kdbx`，浏览分组、条目和详情；**不会写入库文件**。复制和验证码从 M3 接入
+- 当前阶段：M3（搜索、复制、TOTP、自动锁定）开发完成，尚未测试（M2 及之前已完成并打了 tag）。现在能打开真实的 `.kdbx`，浏览、搜索、复制、看验证码，并会自动锁定；**不会写入库文件**
 - 文档：功能规格 [docs/features.md](docs/features.md)、里程碑和待处理问题 [docs/milestones.md](docs/milestones.md)、工程结构和前后端约定 [docs/architecture.md](docs/architecture.md)、M0 结论 [docs/m0-report.md](docs/m0-report.md)
 
 ## 运行

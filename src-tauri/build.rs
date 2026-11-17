@@ -20,6 +20,7 @@ const COMMANDS: &[&str] = &[
     "reveal_field",
     "copy_field",
     "get_totp",
+    "open_url",
     "show_quick_search",
     "hide_quick_search",
 ];
