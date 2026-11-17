@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.89"
+
+[workspace.dependencies]
+keepass = { version = "0.17", features = ["save_kdbx4", "totp"] }
+
+# Argon2 and the ciphers are unbearably slow without optimization, so
+# dependencies are always built optimized, even in dev/test builds.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test.package."*"]
+opt-level = 3

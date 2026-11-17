@@ -1,0 +1,181 @@
+# Mikoshi KDBX test fixtures.
+#
+# TEST DATA ONLY: every password and key file in this directory is public.
+# Never put a real database here.
+#
+# made_by:   who wrote the file (the reader under test must cope with it)
+# password:  whether the file uses the shared test password below
+# keyfile:   key file path, relative to this directory
+# format / cipher / kdf: what the header must say; checked on every run
+# optional:  made by hand in a GUI; skipped with a note while missing
+#
+# Run everything with:  cargo run -p kdbx-compat --release
+
+password = "mikoshi-test"
+
+# ---------------------------------------------------------------- keepassxc-cli
+# Regenerate with: python tests/fixtures/generate.py
+
+[[fixture]]
+file = "kxc/kdbx41-pw.kdbx"
+made_by = "keepassxc-cli"
+password = true
+format = "4.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx41-keyxml2.kdbx"
+made_by = "keepassxc-cli"
+password = false
+keyfile = "keys/xml-v2.keyx"
+format = "4.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx41-pw-keyxml2.kdbx"
+made_by = "keepassxc-cli"
+password = true
+keyfile = "keys/xml-v2.keyx"
+format = "4.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx41-pw-arbitrary.kdbx"
+made_by = "keepassxc-cli"
+password = true
+keyfile = "keys/arbitrary.dat"
+format = "4.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx40-pw.kdbx"
+made_by = "keepassxc-cli"
+password = true
+format = "4.0"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx31-pw.kdbx"
+made_by = "keepassxc-cli"
+password = true
+format = "3.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx31-keyxml1.kdbx"
+made_by = "keepassxc-cli"
+password = false
+keyfile = "keys/xml-v1.key"
+format = "3.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx31-bin32.kdbx"
+made_by = "keepassxc-cli"
+password = false
+keyfile = "keys/binary-32.key"
+format = "3.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx31-hex64.kdbx"
+made_by = "keepassxc-cli"
+password = false
+keyfile = "keys/hex-64.key"
+format = "3.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+[[fixture]]
+file = "kxc/kdbx31-arbitrary.kdbx"
+made_by = "keepassxc-cli"
+password = false
+keyfile = "keys/arbitrary.dat"
+format = "3.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+
+# ---------------------------------------------------------------- made by hand
+# See README.md for how to make each one.
+
+[[fixture]]
+file = "gui/keepassxc-argon2d-chacha20.kdbx"
+made_by = "KeePassXC (GUI)"
+password = true
+format = "4.0"
+cipher = "ChaCha20"
+kdf = "Argon2d"
+optional = true
+
+[[fixture]]
+file = "gui/keepassxc-argon2id-twofish.kdbx"
+made_by = "KeePassXC (GUI)"
+password = true
+format = "4.0"
+cipher = "Twofish"
+kdf = "Argon2id"
+optional = true
+
+[[fixture]]
+file = "gui/keepassxc-aeskdf-kdbx4.kdbx"
+made_by = "KeePassXC (GUI)"
+password = true
+format = "4.0"
+cipher = "AES-256"
+kdf = "AES-KDF"
+optional = true
+
+[[fixture]]
+file = "gui/keepassxc-argon2id-pw-keyfile.kdbx"
+made_by = "KeePassXC (GUI)"
+password = true
+keyfile = "keys/xml-v2.keyx"
+format = "4.0"
+cipher = "AES-256"
+kdf = "Argon2id"
+optional = true
+
+[[fixture]]
+file = "gui/keepass2-argon2d-aes.kdbx"
+made_by = "KeePass 2 (GUI)"
+password = true
+format = "4.1"
+cipher = "AES-256"
+kdf = "Argon2d"
+optional = true
+
+[[fixture]]
+file = "gui/keepass2-argon2id-chacha20.kdbx"
+made_by = "KeePass 2 (GUI)"
+password = true
+format = "4.1"
+cipher = "ChaCha20"
+kdf = "Argon2id"
+optional = true
+
+[[fixture]]
+file = "gui/keepass2-kdbx31.kdbx"
+made_by = "KeePass 2 (GUI)"
+password = true
+format = "3.1"
+cipher = "AES-256"
+kdf = "AES-KDF"
+optional = true
+
+[[fixture]]
+file = "gui/keepass2-keyfile-only.kdbx"
+made_by = "KeePass 2 (GUI)"
+password = false
+keyfile = "gui/keepass2-keyfile-only.keyx"
+format = "4.1"
+cipher = "AES-256"
+kdf = "Argon2d"
+optional = true

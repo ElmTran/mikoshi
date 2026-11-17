@@ -1,0 +1,11 @@
+[package]
+name = "mikoshi-core"
+version = "0.1.0"
+description = "KDBX access and domain logic for Mikoshi, independent of the UI shell"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+keepass.workspace = true
