@@ -1,0 +1,266 @@
+{
+  "name": "个人密码库",
+  "file": "个人密码库.kdbx",
+  "path": "D:\\同步盘\\个人密码库.kdbx",
+  "groups": [
+    { "id": "root", "name": "个人密码库", "parent": null, "kind": "root" },
+    { "id": "fav", "name": "常用", "parent": "root", "kind": "normal" },
+    { "id": "work", "name": "工作", "parent": "root", "kind": "normal" },
+    { "id": "srv", "name": "服务器", "parent": "work", "kind": "normal" },
+    { "id": "fin", "name": "金融", "parent": "root", "kind": "normal" },
+    { "id": "social", "name": "社交", "parent": "root", "kind": "normal" },
+    { "id": "game", "name": "游戏", "parent": "root", "kind": "normal" },
+    { "id": "bin", "name": "回收站", "parent": "root", "kind": "recycleBin" }
+  ],
+  "entries": [
+    {
+      "id": "github",
+      "group": "fav",
+      "title": "GitHub",
+      "username": "linchen-dev",
+      "password": "Vq7#mZ2!pL9x$Rt4",
+      "url": "https://github.com/login",
+      "tags": ["开发", "两步验证"],
+      "otp": true,
+      "created": "2023-04-02T09:13:00",
+      "modified": "2026-11-12T14:20:00",
+      "notes": "两步验证用手机上的验证器。恢复码另存了一份在附件里。",
+      "fields": [
+        { "key": "恢复邮箱", "value": "lin.chen@outlook.com", "protected": false },
+        { "key": "恢复码", "value": "4f2c-9a1e-77b0-c3d5", "protected": true }
+      ],
+      "attachments": [{ "name": "github-recovery-codes.txt", "size": 1229 }]
+    },
+    {
+      "id": "jd",
+      "group": "fav",
+      "title": "京东",
+      "username": "linchen_jd",
+      "password": "kT9@wq3Lm#2v",
+      "url": "https://www.jd.com",
+      "created": "2021-02-11T10:00:00",
+      "modified": "2026-06-03T21:47:00"
+    },
+    {
+      "id": "mail163",
+      "group": "fav",
+      "title": "网易邮箱",
+      "username": "linchen@163.com",
+      "password": "n8&Xr2pQ!vC5",
+      "url": "https://mail.163.com",
+      "otp": true,
+      "created": "2019-07-01T08:30:00",
+      "modified": "2025-12-30T10:05:00"
+    },
+    {
+      "id": "router",
+      "group": "fav",
+      "title": "家里路由器",
+      "username": "admin",
+      "password": "Ht4!Rm8@qz",
+      "url": "http://192.168.31.1",
+      "created": "2022-05-04T19:00:00",
+      "modified": "2025-08-17T19:30:00",
+      "notes": "访客网络单独设了密码，见自定义字段。",
+      "fields": [{ "key": "访客网络密码", "value": "guest-2025-home", "protected": true }]
+    },
+    {
+      "id": "outlook",
+      "group": "work",
+      "title": "工作邮箱",
+      "username": "lin.chen@acme-corp.cn",
+      "password": "Wp3$kL8#nM2q",
+      "url": "https://outlook.office.com",
+      "tags": ["工作"],
+      "created": "2024-03-01T09:00:00",
+      "modified": "2026-10-08T09:12:00"
+    },
+    {
+      "id": "vpn",
+      "group": "work",
+      "title": "公司 VPN",
+      "username": "lin.chen",
+      "password": "Acme@2026Q3!",
+      "url": "https://vpn.acme-corp.cn",
+      "tags": ["工作"],
+      "created": "2024-03-01T09:05:00",
+      "modified": "2026-08-02T08:40:00",
+      "expires": "2026-10-31T00:00:00",
+      "notes": "每 90 天必须改一次密码。"
+    },
+    {
+      "id": "gitlab",
+      "group": "work",
+      "title": "GitLab",
+      "username": "lin.chen",
+      "password": "g7Lq!2Wx#9Pz",
+      "url": "https://git.acme-corp.cn/users/sign_in",
+      "otp": true,
+      "tags": ["工作", "开发"],
+      "created": "2024-03-02T10:00:00",
+      "modified": "2026-09-21T16:02:00"
+    },
+    {
+      "id": "jenkins",
+      "group": "work",
+      "title": "Jenkins",
+      "username": "linchen",
+      "password": "J3nk!ns-ci-88",
+      "url": "https://ci.acme-corp.cn",
+      "created": "2024-03-05T15:00:00",
+      "modified": "2026-03-11T11:26:00"
+    },
+    {
+      "id": "wiki",
+      "group": "work",
+      "title": "Confluence",
+      "username": "lin.chen@acme-corp.cn",
+      "password": "Cf8#mQ2!xL4p",
+      "url": "https://wiki.acme-corp.cn",
+      "created": "2024-03-05T15:10:00",
+      "modified": "2026-01-19T14:55:00"
+    },
+    {
+      "id": "aliyun",
+      "group": "work",
+      "title": "阿里云",
+      "username": "linchen@1849302217.onaliyun.com",
+      "password": "aY6!pR3#tW9m",
+      "url": "https://signin.aliyun.com",
+      "otp": true,
+      "tags": ["工作", "两步验证"],
+      "created": "2024-06-18T11:00:00",
+      "modified": "2026-11-02T17:38:00"
+    },
+    {
+      "id": "notion",
+      "group": "work",
+      "title": "Notion",
+      "username": "lin.chen@outlook.com",
+      "password": "No7!on-Lc-24",
+      "url": "https://www.notion.so",
+      "created": "2023-01-09T20:00:00",
+      "modified": "2025-11-27T22:10:00"
+    },
+    {
+      "id": "prod",
+      "group": "srv",
+      "title": "生产服务器",
+      "username": "root",
+      "password": "Pr0d!x7Qz#4mK2",
+      "url": "ssh://10.0.8.21",
+      "tags": ["服务器"],
+      "created": "2024-04-01T03:00:00",
+      "modified": "2026-07-14T03:22:00",
+      "fields": [
+        { "key": "端口", "value": "22", "protected": false },
+        { "key": "私钥口令", "value": "id_ed25519-passphrase", "protected": true }
+      ]
+    },
+    {
+      "id": "staging",
+      "group": "srv",
+      "title": "测试服务器",
+      "username": "deploy",
+      "password": "St4g!ng-Dp-9",
+      "url": "ssh://10.0.8.35",
+      "tags": ["服务器"],
+      "created": "2024-04-01T03:10:00",
+      "modified": "2026-05-08T15:47:00"
+    },
+    {
+      "id": "pg",
+      "group": "srv",
+      "title": "PostgreSQL 主库",
+      "username": "app_rw",
+      "password": "pG#8wQ2!rT6x",
+      "url": "postgres://db.internal:5432/orders",
+      "created": "2024-04-02T09:00:00",
+      "modified": "2026-02-26T10:31:00"
+    },
+    {
+      "id": "cmb",
+      "group": "fin",
+      "title": "招商银行",
+      "username": "林晨",
+      "password": "851204",
+      "url": "https://pbsz.ebank.cmbchina.com",
+      "created": "2018-09-06T12:00:00",
+      "modified": "2024-09-06T12:00:00",
+      "notes": "U 盾放在书桌左边的抽屉里。",
+      "fields": [{ "key": "卡号尾号", "value": "8821", "protected": false }]
+    },
+    {
+      "id": "alipay",
+      "group": "fin",
+      "title": "支付宝",
+      "username": "138****2046",
+      "password": "Zf6#kW2!pQ8m",
+      "url": "https://www.alipay.com",
+      "created": "2018-01-02T08:00:00",
+      "modified": "2025-04-18T08:09:00"
+    },
+    {
+      "id": "tax",
+      "group": "fin",
+      "title": "个人所得税",
+      "username": "林晨",
+      "password": "Gs9!tX4#wL2q",
+      "url": "https://etax.chinatax.gov.cn",
+      "created": "2020-03-01T20:00:00",
+      "modified": "2026-03-30T20:15:00"
+    },
+    {
+      "id": "bili",
+      "group": "social",
+      "title": "Bilibili",
+      "username": "林晨不加班",
+      "password": "b1L!b1L-22x",
+      "url": "https://www.bilibili.com",
+      "created": "2017-10-01T23:00:00",
+      "modified": "2025-10-01T23:41:00"
+    },
+    {
+      "id": "douban",
+      "group": "social",
+      "title": "豆瓣",
+      "username": "linchen",
+      "password": "Db7#nQ3!mK9w",
+      "url": "https://www.douban.com",
+      "created": "2016-12-12T13:00:00",
+      "modified": "2024-12-12T13:13:00"
+    },
+    {
+      "id": "steam",
+      "group": "game",
+      "title": "Steam",
+      "username": "linchen_gg",
+      "password": "St3am!gG-4x9",
+      "url": "https://store.steampowered.com",
+      "tags": ["游戏"],
+      "created": "2015-08-25T01:00:00",
+      "modified": "2026-08-25T01:05:00",
+      "notes": "Steam 令牌在手机上。"
+    },
+    {
+      "id": "oldbbs",
+      "group": "bin",
+      "title": "旧论坛账号",
+      "username": "linchen2014",
+      "password": "oldpass2014",
+      "url": "http://bbs.example.cn",
+      "created": "2014-05-20T18:00:00",
+      "modified": "2019-05-20T18:00:00"
+    },
+    {
+      "id": "oldmail",
+      "group": "bin",
+      "title": "前公司邮箱",
+      "username": "lin@oldcorp.cn",
+      "password": "Old#C0rp!x",
+      "url": "https://mail.oldcorp.cn",
+      "created": "2020-07-01T09:00:00",
+      "modified": "2022-06-30T17:59:00"
+    }
+  ]
+}

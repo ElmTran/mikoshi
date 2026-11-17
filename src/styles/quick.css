@@ -1,0 +1,183 @@
+/* Quick search window: a transparent borderless window; the panel and its
+   shadow are drawn here, with some margin around it for the shadow. */
+
+html.browser.window-quick {
+  background: var(--bg);
+}
+
+.quick-stage {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 16px 20px 28px;
+}
+
+.qs {
+  position: relative;
+  width: 100%;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--r-layer);
+  background: var(--flyout);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.26),
+    0 0 0 1px var(--stroke);
+  animation: qs-in var(--t-slow) var(--ease-decelerate);
+}
+/* a hairline of the gradient along the top edge */
+.qs::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--grad);
+  z-index: 1;
+}
+
+.qs-input {
+  flex: none;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 16px 0;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-2);
+}
+.qs-input input {
+  flex: 1;
+  height: 100%;
+  font-size: var(--fs-body-large);
+  color: var(--text);
+}
+.qs-input input::placeholder {
+  color: var(--text-3);
+}
+.qs-db {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.qs-caption {
+  padding: 10px 18px 0;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.qs-results {
+  position: relative;
+  max-height: 336px;
+  overflow: auto;
+  padding: 6px;
+}
+.qr {
+  position: relative;
+  height: 52px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 0 12px;
+  border-radius: var(--r-control);
+  transition: background var(--t-fast) linear;
+}
+.qr.on {
+  background: var(--subtle-selected);
+}
+.qr.on::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18px;
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--grad-vertical);
+  animation: fade-in var(--t-normal) linear;
+}
+.qr-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.qr-title,
+.qr-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qr-sub {
+  font-size: var(--fs-caption);
+  line-height: 16px;
+  color: var(--text-2);
+}
+.qr-totp {
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+}
+.qr-flash {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  animation: flash-in var(--t-slow) var(--ease-spring);
+}
+.qr-flash.ok {
+  color: var(--success);
+}
+.qs-empty {
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.qs-foot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--divider);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.qs-foot .hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.qs-foot kbd {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.qs-locked {
+  padding: 20px 20px 22px;
+}
+.unlock-form.compact .unlock-label {
+  font-size: var(--fs-body);
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+@keyframes qs-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+@keyframes flash-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}

@@ -1,0 +1,129 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  background: var(--bg);
+  color: var(--text);
+  font: 400 var(--fs-body) / 20px var(--font-text);
+  -webkit-text-size-adjust: none;
+}
+
+/* With Mica (Windows 11) the native backdrop shows through. */
+html.effects.window-main {
+  background: transparent;
+}
+/* ...except while the theme reveal runs (see theme.ts) */
+html.effects.window-main.theme-switching {
+  background: var(--bg);
+}
+html.window-quick,
+html.window-quick body {
+  background: transparent;
+}
+
+body {
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+button {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: default;
+}
+input {
+  border: 0;
+  background: none;
+  outline: none;
+  min-width: 0;
+  user-select: text;
+}
+h1,
+h2,
+p,
+ul {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+}
+ul {
+  list-style: none;
+}
+mark {
+  background: none;
+  color: var(--accent-text);
+  font-weight: 600;
+}
+kbd {
+  font: inherit;
+}
+
+/* Fluent focus: a two-tone ring, keyboard only */
+:focus-visible {
+  outline: 2px solid var(--focus-outer);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 1px var(--focus-inner) inset;
+}
+input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.icon {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-3) transparent;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.keys {
+  white-space: nowrap;
+}
+.keys kbd + kbd::before {
+  content: '+';
+}
+
+/* the theme switch grows as a circle from the clicked button (theme.ts) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

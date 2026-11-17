@@ -1,0 +1,27 @@
+[package]
+name = "mikoshi"
+version = "0.1.0"
+description = "Mikoshi: a keyboard-first KeePass password manager for Windows"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "mikoshi_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+mikoshi-core = { path = "../crates/mikoshi-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-log = "2"
+log = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+windows-version = "0.1"

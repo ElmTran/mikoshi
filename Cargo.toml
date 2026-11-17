@@ -1,14 +1,19 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "src-tauri"]
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
-rust-version = "1.89"
+# Tauri 2.12 needs 1.90. Cargo prefers dependency versions that support this
+# Rust version, so a value that is too low silently holds dependencies back.
+rust-version = "1.90"
 
 [workspace.dependencies]
 keepass = { version = "0.17", features = ["save_kdbx4", "totp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = { version = "1", features = ["zeroize_derive"] }
 
 # Argon2 and the ciphers are unbearably slow without optimization, so
 # dependencies are always built optimized, even in dev/test builds.
@@ -17,3 +22,8 @@ opt-level = 3
 
 [profile.test.package."*"]
 opt-level = 3
+
+[profile.release]
+# keepass-rs panics on some malformed input (M0 issue K9); every call is
+# wrapped in catch_unwind, which needs unwinding. Never switch to "abort".
+panic = "unwind"
