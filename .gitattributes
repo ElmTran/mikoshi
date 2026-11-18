@@ -1,0 +1,6 @@
+# Keep working copies LF, as Prettier and rustfmt expect, whatever core.autocrlf says
+* text=auto eol=lf
+# Test databases, key files and their XML sources: byte for byte, never converted
+tests/fixtures/** -text
+*.png binary
+*.ico binary
