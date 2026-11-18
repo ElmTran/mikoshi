@@ -193,7 +193,7 @@ pub enum AutotypeOff {
     InRecycleBin,
 }
 
-/// An unlocked database. Never written back to disk (that starts in M6).
+/// An unlocked database. Never written back to disk (that starts in M7).
 pub struct Vault {
     db: Database,
     path: PathBuf,

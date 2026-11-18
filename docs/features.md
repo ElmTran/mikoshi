@@ -17,7 +17,7 @@ Mikoshi 是一个 Windows 桌面密码管理器，直接读写 KeePass 的 `.kdb
 | 桌面框架 | Tauri 2（仅 Windows，WebView2） |
 | 前端 | React + TypeScript + Vite，包管理用 pnpm |
 | 后端 | Rust |
-| KDBX 读写 | [`keepass`](https://github.com/sseemayer/keepass-rs) crate（MIT），当前 0.17.x，需要开启 `save_kdbx4` 和 `totp` 两个 feature |
+| KDBX 读写 | M0–M5 用 [`keepass`](https://github.com/sseemayer/keepass-rs) crate（MIT）0.17.x；M6 起换成自己写的无损读写层（`crates/kdbx`，2026-11-18 决定，原因见 milestones.md 的 M6） |
 | 建议的 Tauri 插件 | global-shortcut、single-instance、autostart、dialog |
 
 建议的应用标识：`com.elmtran.mikoshi`。
@@ -125,7 +125,7 @@ v1 对应 KeePassXC 的功能模块 1–10。每个功能前的标记：**[必�
   - 每次保存前保留一份上一版的备份（`*.kdbx.bak`，可以关）
   - 保存前检查文件有没有被外部改过（对比打开时记下的修改时间和哈希）。被改过就提示用户：重新加载（放弃本地修改）、强制覆盖，或取消。v1 不做合并
   - 沿用原来的加密算法、KDF 参数和压缩设置
-  - keepass-rs 只能写 KDBX 4.1，所以 KDBX 3.1 和 4.0 的库第一次保存后都会变成 4.1。保存前提示用户，并说明 KeePass 2.48 以上能完整支持；KeePassXC 2.8 已实测能打开（2026-11-18 确认）
+  - Mikoshi 只写 KDBX 4.1，所以 KDBX 3.1 和 4.0 的库第一次保存后都会变成 4.1。保存前提示用户，并说明 KeePass 2.48 以上能完整支持；KeePassXC 2.8 已实测能打开（2026-11-18 确认）
   - 新建库的默认参数：KDBX 4，AES-256 或 ChaCha20，Argon2id。KDF 参数要让解锁大约花 1 秒
 - [必须] 标题栏显示是否有未保存的修改，`Ctrl+S` 保存
 - [可选] 每次修改后自动保存（默认关）

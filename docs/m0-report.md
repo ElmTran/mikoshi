@@ -6,6 +6,8 @@
 
 **能用，建议继续用上游 keepass-rs，不需要 fork，也不需要换方案。**
 
+> **后续（2026-11-18）**：M5 之后改了主意。为了从根上解决 K 系列问题、不再受上游牵制，新增 M6 自己写一套无损的 KDBX 读写层，取代 keepass-rs。原来的 M6–M8 顺延为 M7–M9，本报告里的里程碑编号已经同步更新。见 [milestones.md](milestones.md) 的 M6。
+
 - **读取**：KDBX 3.1、4.0、4.1 都能打开，5 种密钥文件格式和"密码 + 密钥文件"组合也都没问题。读出的内容和 KeePassXC 看到的逐项比对，只有 K2、K3、K4 三处不一致。
 - **保存**：常见数据都完整保留。保存后用 keepass-rs 重新读，结果和原来完全相同，附件逐字节一致，历史记录也在。发现的损失都在冷门数据上（K1、K2、K6、K7）。
 - **兼容性**：3 种加密算法 × 3 种 KDF，共 9 种组合，keepass-rs 写出的文件 KeePassXC 都能打开，看到的数据也一致。用 keepass-rs 改过的库（编辑条目、加历史、新建分组和条目、加附件、移进回收站），KeePassXC 也全部读对了。
@@ -112,7 +114,7 @@ keepass-rs 文档推荐的 `target-cpu=native` **不需要，也不该加**：x8
   - 3.1 的库按 K5 合并提示
   - 显式拒绝 KeePass 1 的 `.kdb` 文件：keepass-rs 能读 KDB，但规格不支持
 - **M3**：TOTP 自己实现，不用 keepass-rs 的 `get_otp`（K3、K4）
-- **M6**：
+- **M7**：
   - 保存前把版本设为 KDBX 4.1；从 3.1 升级的库，受保护字段的内层加密从 Salsa20 换成 ChaCha20（KeePass 自己升级时也这么做）
   - 历史记录（含条数和大小上限）、回收站都由 Mikoshi 自己实现：keepass-rs 提供 `History::add_entry` 和 `move_to`，但不会自动记录历史，也不会自动进回收站
 - **贯穿**：keepass-rs 里受保护的值是用 `SecretBox` 存的，释放时会擦除；但未受保护的字段（用户名、URL、备注）和解密过程中的中间缓冲区不会擦除。这在库内部，规格 §6 写的是"尽量"，可以接受
@@ -138,7 +140,7 @@ KeePass 2.48 引入 KDBX 4.1，这是 keepass.info 的说明。更老的 KeePass
 2. **KeePass 2 能不能打开 keepass-rs 写的文件**：本机没装 KeePass 2。
    - keepass-rs 写的文件放在 `target/kdbx-compat/saved/`、`variants/`、`foreign/` 下，用 KeePass 2 打开抽查即可，密码都是 `mikoshi-test`
    - 有一个已知区别：keepass-rs 把整段数据写成一个块，KeePass 是每 1 MiB 一块。格式允许这样写，KeePassXC 也能读
-3. **KeePassDX**：留到 M8 的人工验收。
+3. **KeePassDX**：留到 M9 的人工验收。
 4. **你自己的库**：强烈建议跑一次（见下）。它会告诉你真实数据里有没有命中 K1–K9，特别是 K8（命中的话会直接打不开）。全程只在内存里操作，不写任何文件，输出也只有路径，没有任何值。
 
 ## 怎么跑

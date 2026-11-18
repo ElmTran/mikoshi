@@ -70,9 +70,9 @@ export const enUS: Record<MessageKey, string> = {
   'toast.copied': '{field} copied',
   'toast.copiedClears': '{field} copied. The clipboard clears in {n} seconds.',
   'toast.quoted': '“{name}”',
-  'toast.edit': 'Editing arrives in M6',
-  'toast.newEntry': 'New entries arrive in M6',
-  'toast.export': 'Exporting attachments arrives in M7',
+  'toast.edit': 'Editing arrives in M7',
+  'toast.newEntry': 'New entries arrive in M7',
+  'toast.export': 'Exporting attachments arrives in M8',
   'toast.hotkeysUnavailable':
     'The global hotkey {keys} could not be registered; another program may be using it. You can choose another in Settings.',
 

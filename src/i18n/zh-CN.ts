@@ -70,9 +70,9 @@ export const zhCN = {
   'toast.copied': '已复制{field}',
   'toast.copiedClears': '已复制{field}，{n} 秒后清除剪贴板',
   'toast.quoted': '“{name}”',
-  'toast.edit': '编辑在 M6 接入',
-  'toast.newEntry': '新建条目在 M6 接入',
-  'toast.export': '导出附件在 M7 接入',
+  'toast.edit': '编辑在 M7 接入',
+  'toast.newEntry': '新建条目在 M7 接入',
+  'toast.export': '导出附件在 M8 接入',
   'toast.hotkeysUnavailable': '全局热键 {keys} 没能注册，可能被其他程序占用。可以在设置里换一个',
 
   'unlock.title': '解锁密码库',
