@@ -1458,6 +1458,8 @@
 /* ---------------------------------------------------------------- M4: hotkey fields */
 
 .hotkey-row + .hotkey-row,
+.hotkey-row + .select-row,
+.select-row + .hotkey-row,
 .hotkey-row + .switch-row {
   margin-top: 8px;
 }
@@ -1493,4 +1495,12 @@
   font-size: var(--fs-caption);
   line-height: 16px;
   color: var(--danger);
+}
+
+/* M5: with three hotkeys the settings flyout can be taller than a small
+   window: keep it inside and let it scroll */
+.settings-flyout {
+  max-height: calc(100vh - var(--titlebar-h) - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, listen } from '../api';
-import type { VaultStatus } from '../api/types';
+import type { ErrorCode, VaultStatus } from '../api/types';
 import { appWindow } from '../api/window';
 import { TitleBar } from '../components/TitleBar';
 import { UnlockScreen } from '../components/Unlock';
@@ -29,6 +29,14 @@ export function MainApp() {
     const off = listen<VaultStatus>('vault-changed', setStatus);
     return () => void off.then((f) => f());
   }, [load]);
+
+  // auto-type that failed after Mikoshi got out of the way
+  useEffect(() => {
+    const off = listen<{ code: ErrorCode }>('autotype-failed', ({ code }) =>
+      toast({ message: t(`error.${code}`), tone: 'error', seconds: 8 }),
+    );
+    return () => void off.then((f) => f());
+  }, [t, toast]);
 
   // The window starts hidden so it never flashes unstyled; show it as soon as
   // there is something to show. Not via requestAnimationFrame: a hidden

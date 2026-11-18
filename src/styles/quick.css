@@ -160,6 +160,21 @@ html.browser.window-quick {
   font-weight: 600;
 }
 
+.qr-menu {
+  top: auto;
+  right: auto;
+  width: 190px;
+  padding: 4px;
+  z-index: 5;
+}
+.qr-menu .menu-item:disabled {
+  opacity: 0.45;
+}
+.qr-menu kbd {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
 .qs-locked {
   padding: 20px 20px 22px;
 }

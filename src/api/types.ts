@@ -140,6 +140,9 @@ export interface Settings {
   /** global hotkeys like "Ctrl+Alt+K"; "" = off */
   quickSearchHotkey: string;
   lockHotkey: string;
+  autotypeHotkey: string;
+  /** milliseconds between auto-typed keys */
+  autotypeKeyDelayMs: number;
 }
 
 /** What became of a hotkey from the settings. */
@@ -148,6 +151,13 @@ export type HotkeyState = 'off' | 'active' | 'taken' | 'invalid';
 export interface HotkeyStatus {
   quickSearch: HotkeyState;
   lock: HotkeyState;
+  autotype: HotkeyState;
+}
+
+/** Payload of `quick-shown`. */
+export interface QuickShown {
+  /** auto-type: list the entries that fit the window in front, to pick one */
+  pick: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -161,6 +171,8 @@ export const DEFAULT_SETTINGS: Settings = {
   lockOnMinimize: false,
   quickSearchHotkey: 'Ctrl+Alt+K',
   lockHotkey: 'Ctrl+Alt+L',
+  autotypeHotkey: 'Ctrl+Alt+V',
+  autotypeKeyDelayMs: 20,
 };
 
 /** KeePass field keys, plus the pseudo-field for the current TOTP code. */
@@ -195,6 +207,12 @@ export const ERROR_CODES = [
   'hotkeyInvalid',
   'hotkeyTaken',
   'autostart',
+  'autotypeDisabled',
+  'autotypeSequence',
+  'autotypeField',
+  'autotypeElevated',
+  'autotypeNoWindow',
+  'autotypeFailed',
   'window',
   'internal',
 ] as const;

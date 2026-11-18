@@ -14,11 +14,13 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::AppState;
+use crate::autotype;
 use crate::clipboard;
 use crate::error::{AppError, AppResult};
 use crate::hotkeys;
 use crate::session::{self, Session, VaultStatus};
 use crate::settings::{Settings, Store};
+use crate::typing;
 use crate::windows;
 
 #[derive(Serialize)]
@@ -106,24 +108,22 @@ pub fn set_settings(
     let (merged, old) = {
         let store = self::settings(&state)?;
         let c = &store.current;
-        (
-            c.merge_from_ui(settings),
-            (c.quick_search_hotkey.clone(), c.lock_hotkey.clone()),
-        )
+        (c.merge_from_ui(settings), hotkeys::Wanted::from(c))
     };
-    let keys = (&merged.quick_search_hotkey, &merged.lock_hotkey);
-    let keys_changed = keys != (&old.0, &old.1);
+    let keys = hotkeys::Wanted::from(&merged);
+    let keys_changed = keys != old;
     if keys_changed {
-        let status = hotkeys::apply(&app, keys.0, keys.1);
+        let status = hotkeys::apply(&app, keys.clone());
         let problem = |changed: bool, s: hotkeys::State| match s {
             hotkeys::State::Taken if changed => Some(AppError::HotkeyTaken),
             hotkeys::State::Invalid if changed => Some(AppError::HotkeyInvalid),
             _ => None,
         };
-        let err = problem(*keys.0 != old.0, status.quick_search)
-            .or_else(|| problem(*keys.1 != old.1, status.lock));
+        let err = problem(keys.quick_search != old.quick_search, status.quick_search)
+            .or_else(|| problem(keys.lock != old.lock, status.lock))
+            .or_else(|| problem(keys.autotype != old.autotype, status.autotype));
         if let Some(err) = err {
-            hotkeys::apply(&app, &old.0, &old.1);
+            hotkeys::apply(&app, old);
             return Err(err);
         }
     }
@@ -134,7 +134,7 @@ pub fn set_settings(
         Ok(s) => s,
         Err(e) => {
             if keys_changed {
-                hotkeys::apply(&app, &old.0, &old.1);
+                hotkeys::apply(&app, old);
             }
             return Err(e);
         }
@@ -439,6 +439,102 @@ pub fn hide_quick_search(app: AppHandle, restore: bool) -> AppResult<()> {
         log::error!("cannot hide quick search: {e}");
         AppError::Window
     })
+}
+
+/// Entries that fit the window the quick search box was opened over, for
+/// picking one to auto-type (the box's `pick` mode).
+#[tauri::command]
+pub fn autotype_candidates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<EntrySummary>> {
+    let Some(target) = windows::previous(&app) else {
+        return Ok(Vec::new());
+    };
+    let title = typing::window_title(target);
+    let url = crate::browser::page_url(target);
+    read(&state, |v| {
+        Some(
+            v.autotype_matches(&title, url.as_deref())
+                .into_iter()
+                .map(|(e, _)| e)
+                .collect(),
+        )
+    })
+}
+
+/// From the quick search box: hides it and types into the window it was
+/// opened over. The entry's sequence (`Enter`), or only the password
+/// (`Ctrl+Enter`). Everything that can fail before typing fails here, while
+/// the box can still show it.
+#[tauri::command]
+pub fn autotype_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+    password_only: bool,
+) -> AppResult<()> {
+    let target = windows::previous(&app).ok_or(AppError::AutotypeNoWindow)?;
+    let plan = {
+        let s = session(&state)?;
+        let vault = s.open.as_ref().ok_or(AppError::Locked)?;
+        let sequence = if password_only {
+            "{PASSWORD}".to_string()
+        } else {
+            vault
+                .autotype_sequence(&entry_id, &typing::window_title(target))
+                .ok_or(AppError::NotFound)?
+                .map_err(|_| AppError::AutotypeDisabled)?
+        };
+        typing::plan(vault, &entry_id, &sequence, target).map_err(autotype::app_error)?
+    };
+    windows::hide_quick(&app, true).map_err(|e| {
+        log::error!("cannot hide quick search: {e}");
+        AppError::Window
+    })?;
+    autotype::start(&app, plan);
+    Ok(())
+}
+
+/// From the main window (`Ctrl+Shift+V`, the auto-type button): Mikoshi
+/// minimizes, and the window that comes to the front gets the entry's
+/// sequence. Problems after that show up as an `autotype-failed` event.
+#[tauri::command]
+pub fn autotype_from_main(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> AppResult<()> {
+    // fail early, while the main window is still there to say so
+    read(&state, |v| v.autotype_sequence(&entry_id, ""))?
+        .map_err(|_| AppError::AutotypeDisabled)?;
+    if let Some(w) = tauri::Manager::get_webview_window(&app, "main") {
+        let _ = w.minimize();
+    }
+    std::thread::spawn(move || {
+        // Windows brings the next window forward once ours is minimized
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let Some(target) = typing::foreground_window() else {
+            return autotype::failed(&app, typing::TypeError::NoWindow);
+        };
+        let title = typing::window_title(target);
+        let state = tauri::Manager::state::<AppState>(&app);
+        let plan = state.vault.lock().ok().and_then(|s| {
+            s.open
+                .as_ref()
+                .map(|v| match v.autotype_sequence(&entry_id, &title) {
+                    Some(Ok(seq)) => typing::plan(v, &entry_id, &seq, target),
+                    _ => Err(typing::TypeError::BadSequence),
+                })
+        });
+        match plan {
+            Some(Ok(plan)) => autotype::start(&app, plan),
+            Some(Err(e)) => autotype::failed(&app, e),
+            // locked in the meantime
+            None => autotype::failed(&app, typing::TypeError::Rejected),
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]

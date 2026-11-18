@@ -7,7 +7,7 @@
 use mikoshi_core::OpenError;
 use serde::Serialize;
 
-#[derive(Debug, thiserror::Error, Serialize)]
+#[derive(Debug, Clone, Copy, thiserror::Error, Serialize)]
 #[serde(tag = "code", rename_all = "camelCase")]
 pub enum AppError {
     #[error("the database is locked")]
@@ -53,6 +53,18 @@ pub enum AppError {
     HotkeyTaken,
     #[error("start with Windows could not be changed")]
     Autostart,
+    #[error("auto-type is turned off for this entry")]
+    AutotypeDisabled,
+    #[error("the auto-type sequence cannot be typed")]
+    AutotypeSequence,
+    #[error("the auto-type sequence uses a field the entry does not have")]
+    AutotypeField,
+    #[error("the window runs as administrator")]
+    AutotypeElevated,
+    #[error("there is no window to type into")]
+    AutotypeNoWindow,
+    #[error("auto-type was interrupted")]
+    AutotypeFailed,
     #[error("window operation failed")]
     Window,
     #[error("internal error")]

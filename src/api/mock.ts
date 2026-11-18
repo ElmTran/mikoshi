@@ -354,8 +354,18 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
       case 'pause_hotkeys': {
         const s = loadSettings();
         const state = (k: string) => (k ? 'active' : 'off');
-        return { quickSearch: state(s.quickSearchHotkey), lock: state(s.lockHotkey) };
+        return {
+          quickSearch: state(s.quickSearchHotkey),
+          lock: state(s.lockHotkey),
+          autotype: state(s.autotypeHotkey),
+        };
       }
+      case 'autotype_candidates':
+        return [];
+      case 'autotype_entry':
+      case 'autotype_from_main':
+        // no other windows in a browser
+        throw new AppError('autotypeNoWindow');
       case 'get_autostart':
         return mockAutostart;
       case 'set_autostart':

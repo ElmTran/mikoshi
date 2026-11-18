@@ -91,6 +91,10 @@ pub struct Settings {
     pub quick_search_hotkey: String,
     /// global hotkey that locks the database; "" = off
     pub lock_hotkey: String,
+    /// global hotkey that auto-types into the window in front; "" = off
+    pub autotype_hotkey: String,
+    /// milliseconds between auto-typed keys
+    pub autotype_key_delay_ms: u32,
 }
 
 impl Default for Settings {
@@ -108,6 +112,8 @@ impl Default for Settings {
             // features.md §3.6 and §5
             quick_search_hotkey: "Ctrl+Alt+K".into(),
             lock_hotkey: "Ctrl+Alt+L".into(),
+            autotype_hotkey: "Ctrl+Alt+V".into(),
+            autotype_key_delay_ms: 20,
         }
     }
 }
@@ -272,6 +278,8 @@ mod tests {
         assert_eq!(s.idle_lock_minutes, 5);
         assert_eq!(s.quick_search_hotkey, "Ctrl+Alt+K");
         assert_eq!(s.lock_hotkey, "Ctrl+Alt+L");
+        assert_eq!(s.autotype_hotkey, "Ctrl+Alt+V");
+        assert_eq!(s.autotype_key_delay_ms, 20);
         assert!(!s.lock_on_minimize);
         let _ = fs::remove_dir_all(&dir);
     }

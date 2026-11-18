@@ -74,6 +74,18 @@ const QUICK_SIZE: (f64, f64) = (660.0, 520.0);
 /// got at 100% scale, so on a scaled display (or after moving to another
 /// monitor) it would come up too small and cut off the list.
 pub fn show_quick(app: &AppHandle) -> tauri::Result<()> {
+    show_quick_mode(app, false)
+}
+
+/// What the quick search box shows when it opens.
+#[derive(Clone, serde::Serialize)]
+pub struct QuickShown {
+    /// auto-type: list the entries that fit the window in front (several
+    /// matched, or the database was locked); the user picks one
+    pub pick: bool,
+}
+
+pub fn show_quick_mode(app: &AppHandle, pick: bool) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window("quick") {
         if !w.is_visible().unwrap_or(false) {
             remember_foreground(app);
@@ -82,7 +94,7 @@ pub fn show_quick(app: &AppHandle) -> tauri::Result<()> {
         w.center()?;
         w.show()?;
         w.set_focus()?;
-        w.emit("quick-shown", ())?;
+        w.emit("quick-shown", QuickShown { pick })?;
     }
     Ok(())
 }
@@ -92,12 +104,17 @@ pub fn show_quick(app: &AppHandle) -> tauri::Result<()> {
 /// clicked somewhere else, which already chose where the focus goes.
 pub fn hide_quick(app: &AppHandle, restore: bool) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window("quick") {
-        if restore && w.is_visible().unwrap_or(false) {
-            // while the box still has the focus: Windows only lets the
-            // foreground program hand the focus on
+        let visible = w.is_visible().unwrap_or(false);
+        // Hide first: Windows then activates the window underneath the usual
+        // way, and it puts its keyboard focus back where it was. Activating
+        // it while the box is still up left Windows 11 Notepad with the
+        // focus on no control at all.
+        w.hide()?;
+        if restore && visible {
+            // in case Windows picked another window; we may still hand the
+            // focus on, having been in front a moment ago
             focus_previous(app);
         }
-        w.hide()?;
     }
     Ok(())
 }
@@ -117,7 +134,7 @@ pub fn toggle_quick(app: &AppHandle) {
     }
 }
 
-fn is_ours(hwnd: HWND) -> bool {
+pub fn is_ours(hwnd: HWND) -> bool {
     let mut pid = 0;
     // SAFETY: plain query; an invalid handle leaves `pid` at 0
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
@@ -134,6 +151,11 @@ fn remember_foreground(app: &AppHandle) {
     }
 }
 
+/// The window to auto-type into (see `PreviousWindow`).
+pub fn previous(app: &AppHandle) -> Option<isize> {
+    app.state::<PreviousWindow>().0.lock().ok().and_then(|p| *p)
+}
+
 fn focus_previous(app: &AppHandle) {
     let Some(h) = app.state::<PreviousWindow>().0.lock().ok().and_then(|p| *p) else {
         return;
@@ -141,7 +163,7 @@ fn focus_previous(app: &AppHandle) {
     let hwnd = HWND(h as *mut core::ffi::c_void);
     // SAFETY: IsWindow accepts any value; the window may have closed since
     unsafe {
-        if IsWindow(Some(hwnd)).as_bool() {
+        if IsWindow(Some(hwnd)).as_bool() && GetForegroundWindow() != hwnd {
             let _ = SetForegroundWindow(hwnd);
         }
     }

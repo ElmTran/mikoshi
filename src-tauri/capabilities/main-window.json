@@ -32,6 +32,7 @@
     "allow-get-totp",
     "allow-open-url",
     "allow-show-quick-search",
+    "allow-autotype-from-main",
     "allow-hotkey-status",
     "allow-pause-hotkeys",
     "allow-get-autostart",

@@ -23,6 +23,7 @@ use keepass::error::{
 use keepass::{Database, DatabaseKey};
 
 use crate::Secret;
+use crate::autotype::{self, DEFAULT_SEQUENCE};
 use crate::model::{
     AttachmentView, CustomIconView, EntryDetail, EntrySummary, FieldView, GroupKind, GroupView,
     TotpView, fields,
@@ -177,6 +178,19 @@ struct GroupNode {
     in_bin: bool,
     /// `EnableSearching`, inherited from the parent when the file leaves it unset
     searchable: bool,
+    /// `EnableAutoType`, inherited the same way
+    autotype: bool,
+    /// `DefaultAutoTypeSequence`, inherited from the nearest group that has one
+    sequence: Option<String>,
+}
+
+/// Why an entry cannot be auto-typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutotypeOff {
+    /// turned off for the entry or one of its groups
+    Disabled,
+    /// in the recycle bin
+    InRecycleBin,
 }
 
 /// An unlocked database. Never written back to disk (that starts in M6).
@@ -246,17 +260,39 @@ impl Vault {
             groups: Vec<GroupNode>,
             entries: HashMap<String, (EntryId, usize)>,
         }
-        fn walk(
-            w: &mut Walk,
-            g: &GroupRef<'_>,
-            parent: Option<usize>,
-            depth: u32,
+        /// What a group passes on to its children.
+        #[derive(Clone, Copy)]
+        struct Inherited<'a> {
             in_bin: bool,
             searchable: bool,
+            autotype: bool,
+            sequence: Option<&'a str>,
+        }
+        fn walk<'a>(
+            w: &mut Walk,
+            g: &'a GroupRef<'a>,
+            parent: Option<usize>,
+            depth: u32,
+            from_parent: Inherited<'a>,
         ) {
             let is_bin = w.bin == Some(g.id());
-            let in_bin = in_bin || is_bin;
-            let searchable = g.enable_searching.unwrap_or(searchable);
+            let here = Inherited {
+                in_bin: from_parent.in_bin || is_bin,
+                searchable: g.enable_searching.unwrap_or(from_parent.searchable),
+                autotype: g.enable_autotype.unwrap_or(from_parent.autotype),
+                sequence: g
+                    .default_autotype_sequence
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .or(from_parent.sequence),
+            };
+            let Inherited {
+                in_bin,
+                searchable,
+                autotype,
+                sequence,
+            } = here;
             let index = w.groups.len();
             w.groups.push(GroupNode {
                 id: g.id(),
@@ -272,6 +308,8 @@ impl Vault {
                 },
                 in_bin,
                 searchable,
+                autotype,
+                sequence: sequence.map(str::to_string),
             });
             for e in g.entries() {
                 w.entries.insert(e.id().uuid().to_string(), (e.id(), index));
@@ -280,7 +318,7 @@ impl Vault {
             // stable: keeps the file's order, only moves the bin to the end
             children.sort_by_key(|c| w.bin == Some(c.id()));
             for c in &children {
-                walk(w, c, Some(index), depth + 1, in_bin, searchable);
+                walk(w, c, Some(index), depth + 1, here);
             }
         }
 
@@ -289,7 +327,14 @@ impl Vault {
             groups: Vec::new(),
             entries: HashMap::new(),
         };
-        walk(&mut w, &db.root(), None, 0, false, true);
+        let root = db.root();
+        let top = Inherited {
+            in_bin: false,
+            searchable: true,
+            autotype: true,
+            sequence: None,
+        };
+        walk(&mut w, &root, None, 0, top);
         let group_index = w
             .groups
             .iter()
@@ -555,6 +600,104 @@ impl Vault {
         Some(Ok((self.field(id, key)?, secret)))
     }
 
+    /// Entries that fit a window, with the sequence to type for each, in tree
+    /// order (features.md §3.10). An entry fits through its first matching
+    /// window association; else, in a browser, when the page is on the
+    /// entry URL's site (`page_url`); else, for an entry without
+    /// associations, when the window title contains its title. Skips the
+    /// recycle bin and entries with auto-type turned off.
+    pub fn autotype_matches(
+        &self,
+        window_title: &str,
+        page_url: Option<&str>,
+    ) -> Vec<(EntrySummary, String)> {
+        let title = window_title.to_lowercase();
+        let mut found = Vec::new();
+        for (i, node) in self.groups.iter().enumerate() {
+            if node.in_bin || !node.autotype {
+                continue;
+            }
+            let Some(g) = self.group_ref(node) else {
+                continue;
+            };
+            for e in g.entries() {
+                let Some(at) = autotype_of(&e) else { continue };
+                let by_window = at
+                    .associations
+                    .iter()
+                    .find(|a| autotype::window_matches(&a.window, window_title))
+                    .map(|a| self.sequence_for(&e, i, Some(&a.sequence)));
+                let by_url = || {
+                    let url = e.get(fields::URL).unwrap_or_default();
+                    page_url
+                        .is_some_and(|p| autotype::url_matches(url, p))
+                        .then(|| self.sequence_for(&e, i, None))
+                };
+                let by_title = || {
+                    let own = e
+                        .get(fields::TITLE)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_lowercase();
+                    (at.associations.is_empty() && !own.is_empty() && title.contains(&own))
+                        .then(|| self.sequence_for(&e, i, None))
+                };
+                let sequence = by_window.or_else(by_url).or_else(by_title);
+                if let Some(s) = sequence {
+                    found.push((self.summary(&e, i), s));
+                }
+            }
+        }
+        found
+    }
+
+    /// The sequence to type for one entry chosen by the user (quick search,
+    /// main window): the first window association that fits `window_title`,
+    /// otherwise the entry's or its groups' default. `None` when there is no
+    /// such entry.
+    pub fn autotype_sequence(
+        &self,
+        id: &str,
+        window_title: &str,
+    ) -> Option<Result<String, AutotypeOff>> {
+        let (e, group) = self.entry_ref(id)?;
+        let node = &self.groups[group];
+        if node.in_bin {
+            return Some(Err(AutotypeOff::InRecycleBin));
+        }
+        let Some(at) = autotype_of(&e).filter(|_| node.autotype) else {
+            return Some(Err(AutotypeOff::Disabled));
+        };
+        let assoc = at
+            .associations
+            .iter()
+            .find(|a| autotype::window_matches(&a.window, window_title));
+        Some(Ok(self.sequence_for(
+            &e,
+            group,
+            assoc.map(|a| a.sequence.as_str()),
+        )))
+    }
+
+    /// Association sequence, else the entry's default, else the groups',
+    /// else KeePass's default. Empty ones do not count.
+    fn sequence_for(&self, e: &EntryRef<'_>, group: usize, assoc: Option<&str>) -> String {
+        let own = |s: Option<&str>| {
+            s.map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        own(assoc)
+            .or_else(|| {
+                own(e
+                    .autotype
+                    .as_ref()
+                    .and_then(|a| a.default_sequence.as_deref()))
+            })
+            .or_else(|| self.groups[group].sequence.clone())
+            .unwrap_or_else(|| DEFAULT_SEQUENCE.to_string())
+    }
+
     /// The entry's URL, for opening in a browser.
     pub fn url(&self, id: &str) -> Option<String> {
         let (e, _) = self.entry_ref(id)?;
@@ -570,6 +713,16 @@ impl Vault {
                 data: B64.encode(&i.data),
             })
             .collect()
+    }
+}
+
+/// The entry's auto-type settings when it may be auto-typed. An entry
+/// without an `AutoType` element gets the defaults (enabled, no associations).
+fn autotype_of(e: &EntryRef<'_>) -> Option<keepass::db::AutoType> {
+    match &e.autotype {
+        Some(a) if !a.enabled => None,
+        Some(a) => Some(a.clone()),
+        None => Some(keepass::db::AutoType::default()),
     }
 }
 
@@ -784,6 +937,124 @@ mod tests {
         }
         let plain = v.search("").into_iter().find(|e| !e.has_totp).unwrap();
         assert_eq!(v.totp(&plain.id).unwrap().unwrap_err(), TotpError::Missing);
+    }
+
+    fn id_of(v: &Vault, title: &str) -> String {
+        v.search(&format!("title:\"{title}\""))
+            .into_iter()
+            .find(|e| e.title == title)
+            .map(|e| e.id)
+            .unwrap_or_else(|| {
+                // not searchable (recycle bin, EnableSearching off): walk the index
+                v.entries
+                    .keys()
+                    .find(|id| v.entry(id).is_some_and(|d| d.title == title))
+                    .cloned()
+                    .expect(title)
+            })
+    }
+
+    #[test]
+    fn autotype_matches_window_associations() {
+        let v = open_ok();
+        let titles = |w: &str| -> Vec<(String, String)> {
+            v.autotype_matches(w, None)
+                .into_iter()
+                .map(|(e, s)| (e.title, s))
+                .collect()
+        };
+        // wildcard, with the association's own sequence
+        assert_eq!(
+            titles("notes.txt - Notepad"),
+            [("AutoType Custom".into(), "{PASSWORD}{ENTER}".into())]
+        );
+        // wildcard with an empty sequence: the entry's default
+        assert_eq!(
+            titles("Login - Example - Microsoft Edge"),
+            [(
+                "AutoType Custom".into(),
+                "{USERNAME}{TAB}{TAB}{PASSWORD}{ENTER}".into()
+            )]
+        );
+        // regular expression
+        assert_eq!(
+            titles("Bank of Example - Google Chrome"),
+            [(
+                "AutoType Custom".into(),
+                "{S:Secret Field}{DELAY 100}{ENTER}".into()
+            )]
+        );
+        // no associations: the window title contains the entry title
+        assert_eq!(
+            titles("Sign in - full fields - Edge"),
+            [("Full Fields".into(), DEFAULT_SEQUENCE.into())]
+        );
+        assert!(titles("Something else entirely").is_empty());
+    }
+
+    #[test]
+    fn autotype_matches_browser_pages_by_url() {
+        let v = open_ok();
+        let titles = |url: &str| -> Vec<String> {
+            v.autotype_matches("Example Domain - Google Chrome", Some(url))
+                .into_iter()
+                .map(|(e, s)| {
+                    assert!(autotype::parse(&s).is_ok());
+                    e.title
+                })
+                .collect()
+        };
+        // Full Fields has https://example.com/login?a=1&b=2
+        assert!(titles("accounts.example.com/signin").contains(&"Full Fields".to_string()));
+        assert!(titles("https://example.com").contains(&"Full Fields".to_string()));
+        assert!(!titles("example.org").contains(&"Full Fields".to_string()));
+        // no page address, no URL matching
+        assert!(
+            !v.autotype_matches("Example Domain - Google Chrome", None)
+                .iter()
+                .any(|(e, _)| e.title == "Full Fields")
+        );
+    }
+
+    #[test]
+    fn autotype_skips_disabled_entries_groups_and_the_bin() {
+        let v = open_ok();
+        for title in ["AutoType Disabled", "Deep Entry", "Deleted Entry"] {
+            assert!(
+                v.autotype_matches(&format!("{title} - Login"), None)
+                    .is_empty(),
+                "{title}"
+            );
+        }
+        let seq = |t: &str, w: &str| v.autotype_sequence(&id_of(&v, t), w).unwrap();
+        assert_eq!(seq("AutoType Disabled", "x"), Err(AutotypeOff::Disabled));
+        // EnableAutoType=False on Level 3
+        assert_eq!(seq("Deep Entry", "x"), Err(AutotypeOff::Disabled));
+        assert_eq!(seq("Deleted Entry", "x"), Err(AutotypeOff::InRecycleBin));
+        assert!(v.autotype_sequence("no such entry", "x").is_none());
+    }
+
+    #[test]
+    fn autotype_sequence_for_a_chosen_entry() {
+        let v = open_ok();
+        let seq = |t: &str, w: &str| v.autotype_sequence(&id_of(&v, t), w).unwrap().unwrap();
+        // a fitting association still wins
+        assert_eq!(seq("AutoType Custom", "a - Notepad"), "{PASSWORD}{ENTER}");
+        // otherwise the entry's default
+        assert_eq!(
+            seq("AutoType Custom", "Some Window"),
+            "{USERNAME}{TAB}{TAB}{PASSWORD}{ENTER}"
+        );
+        // no AutoType settings: the group's default, then KeePass's
+        assert_eq!(seq("Full Fields", "Some Window"), DEFAULT_SEQUENCE);
+        // every fixture sequence parses
+        for (t, w) in [
+            ("AutoType Custom", "a - Notepad"),
+            ("AutoType Custom", "Bank x"),
+            ("AutoType Custom", "y"),
+        ] {
+            assert!(autotype::parse(&seq(t, w)).is_ok(), "{t} / {w}");
+        }
     }
 
     #[test]

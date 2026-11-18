@@ -216,7 +216,9 @@ export function Workspace({ status }: { status: VaultStatus }) {
       openUrl: () => {
         if (detail?.url) api.openUrl(detail.id).catch(fail);
       },
-      autotype: () => toast({ message: t('toast.autotype'), tone: 'info' }),
+      autotype: () => {
+        if (detail) api.autotypeFromMain(detail.id).catch(fail);
+      },
       edit: () => toast({ message: t('toast.edit'), tone: 'info' }),
       exportAttachment: () => toast({ message: t('toast.export'), tone: 'info' }),
     };

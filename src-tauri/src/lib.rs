@@ -1,4 +1,6 @@
 mod autolock;
+mod autotype;
+mod browser;
 mod clipboard;
 mod commands;
 mod error;
@@ -6,6 +8,7 @@ mod hotkeys;
 mod session;
 mod settings;
 mod tray;
+mod typing;
 mod windows;
 
 use std::path::PathBuf;
@@ -99,11 +102,7 @@ pub fn run() {
             let last = store.current.recent.first().map(|r| PathBuf::from(&r.path));
             app.manage(hotkeys::Hotkeys::default());
             app.manage(windows::PreviousWindow::default());
-            let keys = hotkeys::apply(
-                app.handle(),
-                &store.current.quick_search_hotkey,
-                &store.current.lock_hotkey,
-            );
+            let keys = hotkeys::apply(app.handle(), hotkeys::Wanted::from(&store.current));
             // a hotkey that did not register would leave a quiet start with
             // no way in except the tray: show the window and its warning
             let start_hidden = std::env::args().any(|a| a == HIDDEN_ARG) && keys.all_usable();
@@ -174,6 +173,9 @@ pub fn run() {
             commands::open_url,
             commands::show_quick_search,
             commands::hide_quick_search,
+            commands::autotype_candidates,
+            commands::autotype_entry,
+            commands::autotype_from_main,
             commands::hotkey_status,
             commands::pause_hotkeys,
             commands::get_autostart,

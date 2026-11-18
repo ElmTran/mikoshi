@@ -1,5 +1,5 @@
 //! Global hotkeys (features.md §3.6, §5): one shows the quick search box from
-//! any program, one locks the database.
+//! any program, one locks the database, one auto-types (§3.10).
 //!
 //! Settings store a hotkey as text: modifiers in the order Ctrl, Alt, Shift,
 //! Win, then one key named like `KeyboardEvent.code` without its prefix
@@ -15,12 +15,32 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::session;
+use crate::settings::Settings;
 use crate::windows;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     QuickSearch,
     Lock,
+    Autotype,
+}
+
+/// The hotkey texts from the settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Wanted {
+    pub quick_search: String,
+    pub lock: String,
+    pub autotype: String,
+}
+
+impl From<&Settings> for Wanted {
+    fn from(s: &Settings) -> Self {
+        Wanted {
+            quick_search: s.quick_search_hotkey.clone(),
+            lock: s.lock_hotkey.clone(),
+            autotype: s.autotype_hotkey.clone(),
+        }
+    }
 }
 
 /// What became of a hotkey from the settings.
@@ -42,11 +62,12 @@ pub enum State {
 pub struct Status {
     pub quick_search: State,
     pub lock: State,
+    pub autotype: State,
 }
 
 impl Status {
     pub fn all_usable(&self) -> bool {
-        [self.quick_search, self.lock]
+        [self.quick_search, self.lock, self.autotype]
             .iter()
             .all(|s| matches!(s, State::Off | State::Active))
     }
@@ -55,7 +76,7 @@ impl Status {
 #[derive(Default)]
 struct Inner {
     /// the texts from the settings, kept to re-register after a pause
-    wanted: (String, String),
+    wanted: Wanted,
     registered: Vec<(Action, Shortcut)>,
     status: Status,
     paused: bool,
@@ -107,19 +128,20 @@ pub fn on_shortcut(app: &AppHandle, shortcut: &Shortcut, state: ShortcutState) {
     match action {
         Some(Action::QuickSearch) => windows::toggle_quick(app),
         Some(Action::Lock) => session::lock_app(app, "hotkey"),
+        Some(Action::Autotype) => crate::autotype::on_hotkey(app),
         None => {}
     }
 }
 
 /// Registers the hotkeys from the settings in place of the current ones and
 /// tells every window the result.
-pub fn apply(app: &AppHandle, quick_search: &str, lock: &str) -> Status {
+pub fn apply(app: &AppHandle, wanted: Wanted) -> Status {
     let state = app.state::<Hotkeys>();
     let status = {
         let Ok(mut h) = state.0.lock() else {
             return Status::default();
         };
-        h.wanted = (quick_search.to_string(), lock.to_string());
+        h.wanted = wanted;
         // a recorded hotkey ends the pause, so the result is known at once
         h.paused = false;
         register(app, &mut h)
@@ -190,8 +212,9 @@ fn register(app: &AppHandle, h: &mut Inner) -> Status {
         }
     };
     let status = Status {
-        quick_search: one(Action::QuickSearch, &wanted.0),
-        lock: one(Action::Lock, &wanted.1),
+        quick_search: one(Action::QuickSearch, &wanted.quick_search),
+        lock: one(Action::Lock, &wanted.lock),
+        autotype: one(Action::Autotype, &wanted.autotype),
     };
     h.status = status;
     status

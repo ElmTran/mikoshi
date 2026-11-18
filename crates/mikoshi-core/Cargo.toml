@@ -18,6 +18,8 @@ hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
 percent-encoding = "2"
+# window associations written as //regex// (the version already in the tree)
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 
 [dev-dependencies]
 serde_json.workspace = true

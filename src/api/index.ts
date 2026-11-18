@@ -81,6 +81,13 @@ export const api = {
   showQuickSearch: () => call<void>('show_quick_search'),
   /** `restore`: give the focus back to the window that was in front before */
   hideQuickSearch: (restore: boolean) => call<void>('hide_quick_search', { restore }),
+  /** entries that fit the window the quick search box was opened over */
+  autotypeCandidates: () => call<EntrySummary[]>('autotype_candidates'),
+  /** from the quick search box: the entry's sequence, or only the password */
+  autotypeEntry: (entryId: string, passwordOnly: boolean) =>
+    call<void>('autotype_entry', { entryId, passwordOnly }),
+  /** from the main window: it minimizes and types into the window behind */
+  autotypeFromMain: (entryId: string) => call<void>('autotype_from_main', { entryId }),
   hotkeyStatus: () => call<HotkeyStatus>('hotkey_status'),
   /** while recording a new hotkey; saving one also ends the pause */
   pauseHotkeys: (paused: boolean) => call<HotkeyStatus>('pause_hotkeys', { paused }),
@@ -88,7 +95,8 @@ export const api = {
   setAutostart: (enabled: boolean) => call<boolean>('set_autostart', { enabled }),
 };
 
-export type AppEvent = 'vault-changed' | 'settings-changed' | 'quick-shown' | 'hotkeys-changed';
+export type AppEvent =
+  'vault-changed' | 'settings-changed' | 'quick-shown' | 'hotkeys-changed' | 'autotype-failed';
 
 /** Subscribes to an event sent by the Rust side. Returns an unsubscribe function. */
 export async function listen<T>(event: AppEvent, handler: (payload: T) => void): Promise<() => void> {

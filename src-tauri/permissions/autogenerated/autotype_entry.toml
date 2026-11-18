@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-autotype-entry"
+description = "Enables the autotype_entry command without any pre-configured scope."
+commands.allow = ["autotype_entry"]
+
+[[permission]]
+identifier = "deny-autotype-entry"
+description = "Denies the autotype_entry command without any pre-configured scope."
+commands.deny = ["autotype_entry"]

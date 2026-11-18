@@ -15,6 +15,7 @@ const LANGUAGES: LanguagePref[] = ['system', 'zh-CN', 'en-US'];
 // 0 means never
 const IDLE_MINUTES = [1, 2, 5, 10, 15, 30, 60, 0];
 const CLEAR_SECONDS = [5, 10, 20, 30, 60, 0];
+const KEY_DELAYS = [5, 10, 20, 50, 100];
 
 /** The offered choices, plus the current value if it is not one of them. */
 const withCurrent = (choices: number[], current: number) =>
@@ -180,6 +181,26 @@ export function SettingsButton() {
               state={hotkeys?.lock}
               onSave={(text) => update({ lockHotkey: text })}
             />
+            <HotkeyField
+              label={t('settings.autotypeHotkey')}
+              value={settings.autotypeHotkey}
+              state={hotkeys?.autotype}
+              onSave={(text) => update({ autotypeHotkey: text })}
+            />
+            <label className="select-row">
+              <span>{t('settings.keyDelay')}</span>
+              <select
+                className="select"
+                value={settings.autotypeKeyDelayMs}
+                onChange={(e) => void update({ autotypeKeyDelayMs: Number(e.target.value) })}
+              >
+                {withCurrent(KEY_DELAYS, settings.autotypeKeyDelayMs).map((ms) => (
+                  <option key={ms} value={ms}>
+                    {t('settings.milliseconds', { n: ms })}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Switch
               on={autostart === true}
               label={t('settings.autostart')}
