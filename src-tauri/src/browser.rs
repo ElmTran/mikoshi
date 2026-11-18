@@ -142,3 +142,59 @@ fn read_address_bar(target: isize) -> Option<String> {
         url
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, IsWindowVisible};
+    use windows::core::BOOL;
+
+    /// Needs Chrome open on https://example.com/ (features.md
+    /// §3.10, M5 acceptance). Reads the address bars only, types nothing;
+    /// prints whether each window matched, never the address.
+    /// `cargo test -p mikoshi browser -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn reads_example_com_from_open_browsers() {
+        unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
+            // SAFETY: `data` is the Vec passed below, alive for the call
+            let found = unsafe { &mut *(data.0 as *mut Vec<(isize, String)>) };
+            let mut buf = [0u16; 512];
+            // SAFETY: plain queries into a buffer of the given length
+            let len = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
+            let title = String::from_utf16_lossy(&buf[..len]);
+            if unsafe { IsWindowVisible(hwnd) }.as_bool() && title.contains("Example Domain") {
+                found.push((hwnd.0 as isize, title));
+            }
+            true.into()
+        }
+        let mut found: Vec<(isize, String)> = Vec::new();
+        // SAFETY: the callback only touches `found`
+        unsafe {
+            let _ = EnumWindows(Some(collect), LPARAM(&mut found as *mut _ as isize));
+        }
+        assert!(!found.is_empty(), "no window titled Example Domain");
+        let mut browsers = Vec::new();
+        for (hwnd, title) in &found {
+            let exe = super::process_file_name(*hwnd).unwrap_or_default();
+            let started = std::time::Instant::now();
+            let url = super::page_url(*hwnd);
+            let ms = started.elapsed().as_millis();
+            let url = url.unwrap_or_else(|| panic!("{exe}: address not read ({title})"));
+            let same = mikoshi_core::autotype::url_matches("https://example.com/login", &url);
+            let sub = mikoshi_core::autotype::url_matches("example.com", &url);
+            let other = mikoshi_core::autotype::url_matches("https://example.org", &url);
+            let parent = mikoshi_core::autotype::url_matches("https://www.example.com", &url);
+            println!(
+                "{exe}: read in {ms} ms; example.com/login {same}, bare example.com {sub}, \
+                 example.org {other}, entry www.example.com {parent}"
+            );
+            assert!(same && sub && !other, "{exe}: wrong match");
+            browsers.push(exe.to_ascii_lowercase());
+        }
+        assert!(
+            browsers.iter().any(|b| b == "chrome.exe"),
+            "chrome.exe not checked"
+        );
+    }
+}

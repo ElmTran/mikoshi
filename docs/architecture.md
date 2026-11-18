@@ -124,6 +124,26 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 - **开机启动**（tauri-plugin-autostart）：写当前用户的 `Run` 注册表项，带 `--hidden` 参数，启动后只在托盘。状态以注册表为准（任务管理器里也能关），不存设置文件。注意开发构建打开它，写进去的是 `target\debug\mikoshi.exe`
 - 自动启动插件自带的前端命令没有授权给任何窗口，只能通过 `get_autostart` / `set_autostart`
 
+### 自动输入
+
+分三层：匹配和序列解析在核心库（`crates/mikoshi-core/src/autotype.rs`、`vault.rs`），只认字段名、不碰字段值；按键在 `src-tauri/src/typing.rs`；入口在 `src-tauri/src/autotype.rs` 和 `commands.rs`。
+
+- **匹配**（`Vault::autotype_matches`）：按分组树的顺序看每个条目，命中第一条就算。依次是：窗口关联（`*` 通配符，不区分大小写；`//…//` 是正则，限制编译大小）；前台是浏览器时，页面主机名等于条目网址的主机名或是它的子域名（条目网址开头的 `www.` 忽略；不带点的主机名和 IP 必须完全相同；只认 http、https 和不写协议的网址）；没有窗口关联的条目，窗口标题包含条目标题。跳过回收站、关闭了自动输入的条目和分组。分组的"启用自动输入"和默认序列向下继承
+- **序列**（`autotype::parse`）：解析成步骤列表，字段引用只记名字。§3.10 的占位符和转义、`{TAB 2}` 这样的重复、`+` `^` `%` 修饰键和 `(…)` 分组。有认不出的内容就整段报错，一个键都不输入
+- **浏览器网址**（`browser.rs`）：前台进程是 Edge、Chrome、Brave、Vivaldi、Firefox 时，用 UI 自动化找地址栏（Chromium 的类名 `OmniboxViewViews`，Firefox 的 AutomationId `urlbar-input`）读它的值。在单独的线程里初始化 COM，最多等 1.5 秒，超时就当不是浏览器。网址只用来比对，不写日志。实测 Chrome 读一次约 30 毫秒（`cargo test -p mikoshi browser -- --ignored --nocapture`，要先在 Chrome 里打开 example.com）
+- **准备**（`typing::plan`）：先把序列里要用的字段值全部取出来（放在 `Zeroizing` 里），检查目标窗口还在、权限不比 Mikoshi 高（比较两个进程令牌的提升状态；Windows 会悄悄丢掉发给管理员窗口的按键，所以提前报 `autotypeElevated`）。能出的错都在这一步出，快速搜索框还开着的时候就能显示
+- **输入**（`typing::run`，单独的线程）：
+  1. Alt 或 Win 还按着时先补一个没分配的按键，松开时就不会打开菜单栏或开始菜单（M5 的 A3，KeePass 和 AutoHotkey 也这么做）；再等触发热键的修饰键全部松开，5 秒还没松开就放弃（`keysHeld`）
+  2. 把目标窗口调到前台
+  3. 目标窗口的键盘布局是中文、日文、韩文时，换成英文（美国）键盘，输完换回。微软拼音这类 TSF 输入法不理会旧的"关闭输入法"消息（M5 的 A1），所以要换布局；没装英文键盘就不换。另外照旧给还在用老输入法接口的程序发 `WM_IME_CONTROL` 关闭输入法，输完按原样打开
+  4. 普通字符用 `KEYEVENTF_UNICODE` 逐个码元发送（和键盘布局无关，中文、emoji 都行）；Tab、Enter 等用虚拟键码，方向键那一块带"扩展键"标记
+  5. 每个键之前确认前台窗口没变，变了就停（`focusLost`，用户自己切走的，不提示）；键之间按设置的间隔等待（默认 20 毫秒）
+- **入口和目标窗口**：
+  - 全局热键（默认 `Ctrl+Alt+V`）：目标是当时的前台窗口（Mikoshi 自己的不算）。只匹配到一个就直接输入；多个或库已锁定，打开快速搜索框的选择模式（`pick`，锁定时先解锁）列出匹配的条目；一个都没有，打开快速搜索框
+  - 快速搜索框：目标是搜索框显示前记下的窗口。`Enter` 用条目的序列，`Ctrl+Enter` 只输入密码。先隐藏搜索框让 Windows 按常规激活下面的窗口，没激活再补一次（M5 的 A2）
+  - 主窗口 `Ctrl+Shift+V` 和"自动输入"按钮：主窗口最小化，300 毫秒后的前台窗口就是目标
+- **失败提示**：搜索框关掉之后才出的错，发 `autotype-failed` 事件，主窗口显示出来并提示。错误只有错误码，不带窗口标题、网址和字段内容
+
 ### 打开网址
 
 `open_url` 在 Rust 端取条目的网址：没有协议的补上 `https://`，解析后必须是 http 或 https 且有主机名，否则报 `unsafeUrl`。KeePass 允许的 `cmd://` 之类会运行程序，一律拒绝。用 tauri-plugin-opener 交给默认浏览器；日志里不写网址。
