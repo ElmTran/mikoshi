@@ -2,8 +2,10 @@ mod autolock;
 mod clipboard;
 mod commands;
 mod error;
+mod hotkeys;
 mod session;
 mod settings;
+mod tray;
 mod windows;
 
 use std::path::PathBuf;
@@ -19,7 +21,13 @@ pub struct AppState {
     pub clipboard: clipboard::Tracker,
     /// the main window has the Mica backdrop, so its page must stay transparent
     pub effects: bool,
+    /// started with Windows (`--hidden`): stay in the tray, the main window
+    /// is not shown until asked for
+    pub start_hidden: bool,
 }
+
+/// The argument start-with-Windows passes, see `start_hidden`.
+const HIDDEN_ARG: &str = "--hidden";
 
 /// WebView2 reads a few environment variables that change how it starts:
 /// extra browser arguments (which can open a remote debugging port), another
@@ -50,6 +58,18 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::focus_main(app)
         }))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    hotkeys::on_shortcut(app, shortcut, event.state)
+                })
+                .build(),
+        )
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .arg(HIDDEN_ARG)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -77,20 +97,34 @@ pub fn run() {
             let store = settings::Store::load(config_dir);
             // start on the database used last (features.md §3.1)
             let last = store.current.recent.first().map(|r| PathBuf::from(&r.path));
+            app.manage(hotkeys::Hotkeys::default());
+            app.manage(windows::PreviousWindow::default());
+            let keys = hotkeys::apply(
+                app.handle(),
+                &store.current.quick_search_hotkey,
+                &store.current.lock_hotkey,
+            );
+            // a hotkey that did not register would leave a quiet start with
+            // no way in except the tray: show the window and its warning
+            let start_hidden = std::env::args().any(|a| a == HIDDEN_ARG) && keys.all_usable();
             app.manage(AppState {
                 settings: Mutex::new(store),
                 vault: Mutex::new(session::Session::new(last)),
                 clipboard: clipboard::Tracker::default(),
                 effects,
+                start_hidden,
             });
             windows::create_all(app.handle())?;
+            tray::create(app.handle())?;
             autolock::start(app.handle());
 
             log::info!(
                 "Mikoshi {} started (window effects: {effects})",
                 env!("CARGO_PKG_VERSION")
             );
-            windows::show_main_if_frontend_is_stuck(app.handle());
+            if !start_hidden {
+                windows::show_main_if_frontend_is_stuck(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -98,8 +132,11 @@ pub fn run() {
                 return;
             }
             match event {
-                // Until the tray arrives in M4, closing the main window quits.
-                WindowEvent::CloseRequested { .. } => window.app_handle().exit(0),
+                // the program lives on in the tray; Quit is in the tray menu
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
                 // optional: lock when minimized (features.md §3.2)
                 WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
                     let app = window.app_handle();
@@ -137,6 +174,10 @@ pub fn run() {
             commands::open_url,
             commands::show_quick_search,
             commands::hide_quick_search,
+            commands::hotkey_status,
+            commands::pause_hotkeys,
+            commands::get_autostart,
+            commands::set_autostart,
         ])
         .build(tauri::generate_context!())
         .expect("error while starting Mikoshi")

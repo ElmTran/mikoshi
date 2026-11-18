@@ -8,7 +8,7 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 |---|---|
 | `crates/mikoshi-core/` | 核心库，不依赖 Tauri：`Secret` 类型、给前端看的数据类型（`model`）、搜索排序、打开和读取 KDBX（`vault`） |
 | `crates/kdbx-compat/` | M0 的兼容性检查工具，同时是回归测试 |
-| `src-tauri/` | 桌面程序：窗口、命令、当前选中和已解锁的库（`session.rs`）、设置文件、日志 |
+| `src-tauri/` | 桌面程序：窗口、命令、当前选中和已解锁的库（`session.rs`）、托盘（`tray.rs`）、全局热键（`hotkeys.rs`）、设置文件、日志 |
 | `src/` | 前端（React + TypeScript）：`api/` 是唯一和 Rust 通信的地方，`app/` 是页面和状态，`components/` 是界面部件，`icons/` 是 KeePass 标准图标，`i18n/` 是中英文文案，`styles/` 是样式 |
 | `design/mockups/` | 选风格时的三套静态样稿，留作记录 |
 | `design/icons/` | 69 个标准图标的预览页，由 `tools/icon-sheet.mjs` 生成 |
@@ -41,9 +41,9 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 
 | 命令 | 作用 | 主窗口 | 快速搜索 |
 |---|---|---|---|
-| `app_info` | 版本号、是否启用了云母背景 | ✓ | ✓ |
+| `app_info` | 版本号、是否启用了云母背景、是否随开机启动（`startHidden`） | ✓ | ✓ |
 | `get_settings` | 读设置 | ✓ | ✓ |
-| `set_settings` | 改设置（最近文件列表除外，见"设置文件"） | ✓ | |
+| `set_settings` | 改设置（最近文件列表除外，见"设置文件"）。热键改了先注册，注册不上就不保存，报 `hotkeyTaken` / `hotkeyInvalid` | ✓ | |
 | `vault_status` | 是否已锁定、选中的库、记住的密钥文件路径 | ✓ | ✓ |
 | `select_database` | 选中一个库（最近文件列表里的）；已解锁的库会先锁定 | ✓ | |
 | `choose_database` | 弹出系统的打开文件对话框选库 | ✓ | |
@@ -61,7 +61,11 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 | `get_totp` | 当前验证码和剩余秒数 | ✓ | |
 | `open_url` | 用默认浏览器打开条目的网址（只限 http 和 https） | ✓ | |
 | `show_quick_search` | 显示快速搜索框 | ✓ | |
-| `hide_quick_search` | 隐藏快速搜索框 | | ✓ |
+| `hide_quick_search` | 隐藏快速搜索框；`restore` 为真时把焦点还给之前的窗口 | | ✓ |
+| `hotkey_status` | 两个全局热键的状态：`off` / `active` / `taken` / `invalid` | ✓ | |
+| `pause_hotkeys` | 设置里录制新热键时暂停全局热键；保存热键也会恢复 | ✓ | |
+| `get_autostart` | 是否开机启动（读 Windows 的启动项，不存在设置文件里） | ✓ | |
+| `set_autostart` | 打开或关闭开机启动 | ✓ | |
 
 字段的 `key` 沿用 KeePass 的名字：`Title`、`UserName`、`Password`、`URL`、`Notes`，自定义字段用它自己的名字，`@totp` 表示当前验证码。
 
@@ -74,12 +78,15 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 | `vault-changed` | 解锁、锁定、选中另一个库之后 | 新的库状态 |
 | `settings-changed` | 设置保存之后（包括解锁后更新最近文件列表） | 新的设置 |
 | `quick-shown` | 快速搜索框显示时 | 无；窗口收到后清空上次的输入 |
+| `hotkeys-changed` | 热键重新注册之后 | 新的热键状态 |
+
+托盘菜单在 Rust 端监听 `vault-changed` 和 `settings-changed`，跟着更新"锁定/解锁…"和语言。
 
 ### 错误
 
 命令失败时只返回一个错误码，例如 `{"code": "locked"}`，前端按当前语言显示对应的文案（`error.locked` 等）。错误里**不带任何用户数据**，所以可以放心写进日志或显示出来。错误码定义在 `src-tauri/src/error.rs`，前端的对应类型在 `src/api/types.ts`。
 
-解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`wrongKeyOrCorrupt`（KDBX 3.1）、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`notYet`（功能在后面的里程碑接入）。
+解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`wrongKeyOrCorrupt`（KDBX 3.1）、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
 
 ### 剪贴板
 
@@ -108,6 +115,15 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 - 睡眠和休眠：同一个窗口收到 `WM_POWERBROADCAST` 的 `PBT_APMSUSPEND` 就锁定（只有顶层窗口收得到这个广播，所以不用 message-only 窗口）
 - 最小化（可选，默认关）：主窗口的 `Resized` 事件里检查是否最小化
 
+### 托盘、热键与快速搜索框
+
+- **托盘**（`tray.rs`）：左键单击显示主窗口；菜单是显示主窗口、锁定/解锁…（锁定时打开主窗口去解锁）、快速搜索、退出。菜单文字按设置的语言，"跟随系统"时看 Windows 界面语言是不是中文。关闭主窗口只是隐藏，退出只能从托盘菜单
+- **全局热键**（`hotkeys.rs`，tauri-plugin-global-shortcut）：默认 `Ctrl+Alt+K` 快速搜索、`Ctrl+Alt+L` 锁定。设置里存成 `Ctrl+Alt+K` 这样的文字：修饰键按 Ctrl、Alt、Shift、Win 的顺序，最后一个键用 `KeyboardEvent.code` 的名字（字母和数字去掉 `Key`、`Digit` 前缀）。必须带 Ctrl、Alt、Win 之一。快速搜索热键再按一次关闭搜索框
+- **注册失败**：启动时注册不上的热键记为 `taken`，主窗口显示提示，设置里对应的热键下面也有提示；随开机启动时如果有热键注册不上，主窗口照样显示出来，否则只剩托盘一个入口
+- **焦点**：快速搜索框显示前记下当时的前台窗口（Mikoshi 自己的窗口不算），`Enter` 复制或 `Esc` 关闭时在隐藏前把焦点还给它；点别处关闭时不还。M5 的自动输入也打到这个窗口
+- **开机启动**（tauri-plugin-autostart）：写当前用户的 `Run` 注册表项，带 `--hidden` 参数，启动后只在托盘。状态以注册表为准（任务管理器里也能关），不存设置文件。注意开发构建打开它，写进去的是 `target\debug\mikoshi.exe`
+- 自动启动插件自带的前端命令没有授权给任何窗口，只能通过 `get_autostart` / `set_autostart`
+
 ### 打开网址
 
 `open_url` 在 Rust 端取条目的网址：没有协议的补上 `https://`，解析后必须是 http 或 https 且有主机名，否则报 `unsafeUrl`。KeePass 允许的 `cmd://` 之类会运行程序，一律拒绝。用 tauri-plugin-opener 交给默认浏览器；日志里不写网址。
@@ -126,7 +142,7 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 | 原型冻结 | `freezePrototype`，防止页面脚本被篡改内置对象后影响通信 | `tauri.conf.json` |
 | panic 不终止进程 | release 保持 `panic = "unwind"`。keepass-rs 遇到某些坏文件会 panic（M0 的 K9），M2 会用 `catch_unwind` 拦住 | 根目录 `Cargo.toml` |
 | 单实例 | 再次启动时把已有窗口切到前台，新进程退出 | `src-tauri/src/lib.rs` |
-| 窗口不会"隐身" | 主窗口启动时先隐藏，界面画好再显示。如果界面加载失败，5 秒后照样显示，不会留下一个看不见的进程 | `src-tauri/src/windows.rs` |
+| 窗口不会"隐身" | 主窗口启动时先隐藏，界面画好再显示。如果界面加载失败，5 秒后照样显示，不会留下一个看不见的进程。随开机启动（`--hidden`）时例外：程序在托盘里，随时能打开 | `src-tauri/src/windows.rs` |
 | 启动失败有提示 | 界面连不上后台时显示"没能启动"和重试按钮，不会停在空白窗口 | `src/app/MainApp.tsx` |
 
 ### 启动顺序
@@ -148,8 +164,9 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
   - `clipboardClearSeconds`：复制的秘密多少秒后清除，默认 10，0 表示不清除
   - `idleLockMinutes`：全局无操作多少分钟后锁定，默认 5，0 表示不锁定
   - `lockOnMinimize`：主窗口最小化时锁定，默认关
+  - `quickSearchHotkey`、`lockHotkey`：全局热键，默认 `Ctrl+Alt+K`、`Ctrl+Alt+L`，空字符串表示关闭
 - `recent` 由 Rust 端维护：解锁成功时更新，`forget_recent` 删除。`set_settings` 收到的 `recent` 会被忽略，免得某个窗口拿着旧列表把新列表覆盖掉
-- **只放非敏感信息。** 之后会加热键
+- **只放非敏感信息。**
 - 写入方式：先写临时文件再改名，中途崩溃不会留下半截文件
 - 文件损坏或缺字段时用默认值，不认识的字段忽略，所以新旧版本可以互相读
 - 日志在 `%LOCALAPPDATA%\com.elmtran.mikoshi\logs\`

@@ -74,6 +74,8 @@ export const enUS: Record<MessageKey, string> = {
   'toast.edit': 'Editing arrives in M6',
   'toast.newEntry': 'New entries arrive in M6',
   'toast.export': 'Exporting attachments arrives in M7',
+  'toast.hotkeysUnavailable':
+    'The global hotkey {keys} could not be registered; another program may be using it. You can choose another in Settings.',
 
   'unlock.title': 'Unlock database',
   'unlock.welcome': 'Open a database',
@@ -122,6 +124,9 @@ export const enUS: Record<MessageKey, string> = {
   'error.notYet': 'This is not available yet',
   'error.settingsNotSaved': 'Settings could not be saved. Try again.',
   'error.window': 'The window could not be updated',
+  'error.hotkeyInvalid': 'This combination cannot be a hotkey. Include at least one of Ctrl, Alt or Win.',
+  'error.hotkeyTaken': 'Another program already uses this combination. Try another one.',
+  'error.autostart': 'Start with Windows could not be changed. Try again.',
   'error.internal': 'Something went wrong inside Mikoshi. Try again.',
 
   'settings.title': 'Settings',
@@ -145,6 +150,16 @@ export const enUS: Record<MessageKey, string> = {
   'settings.seconds.other': '{n} seconds',
   'settings.lockOnMinimize': 'Lock when minimized',
   'settings.lockOnMinimizeHint': 'Locks as soon as the main window is minimized',
+  'settings.system': 'System',
+  'settings.quickSearchHotkey': 'Quick search hotkey',
+  'settings.lockHotkey': 'Lock hotkey',
+  'settings.hotkeyRecording': 'Press the new keys…',
+  'settings.hotkeyOff': 'Off',
+  'settings.hotkeyHint': 'Click, then press the new keys. Esc cancels, Backspace turns the hotkey off.',
+  'settings.hotkeyTaken': 'In use by another program, not working now',
+  'settings.hotkeyInvalid': 'Not a valid hotkey, not working now',
+  'settings.autostart': 'Start with Windows',
+  'settings.autostartHint': 'Waits in the tray after you sign in, without opening the main window',
   'settings.version': 'Version {v}',
 
   'quick.placeholder': 'Search the database',

@@ -31,6 +31,10 @@
     "allow-copy-field",
     "allow-get-totp",
     "allow-open-url",
-    "allow-show-quick-search"
+    "allow-show-quick-search",
+    "allow-hotkey-status",
+    "allow-pause-hotkeys",
+    "allow-get-autostart",
+    "allow-set-autostart"
   ]
 }

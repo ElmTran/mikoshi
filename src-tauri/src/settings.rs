@@ -1,7 +1,7 @@
 //! User preferences, stored as JSON in `%APPDATA%\com.elmtran.mikoshi\settings.json`.
 //!
 //! Only non-sensitive data belongs here (features.md §6): appearance, language,
-//! recent file paths, key file paths, list sorting, and later hotkeys. Never a
+//! recent file paths, key file paths, list sorting, hotkeys. Never a
 //! password, never the contents of a key file.
 
 use std::fs;
@@ -86,6 +86,11 @@ pub struct Settings {
     /// 0 = never
     pub idle_lock_minutes: u32,
     pub lock_on_minimize: bool,
+    /// global hotkey for the quick search box, like "Ctrl+Alt+K"; "" = off
+    /// (format in hotkeys.rs)
+    pub quick_search_hotkey: String,
+    /// global hotkey that locks the database; "" = off
+    pub lock_hotkey: String,
 }
 
 impl Default for Settings {
@@ -100,6 +105,9 @@ impl Default for Settings {
             clipboard_clear_seconds: 10,
             idle_lock_minutes: 5,
             lock_on_minimize: false,
+            // features.md §3.6 and §5
+            quick_search_hotkey: "Ctrl+Alt+K".into(),
+            lock_hotkey: "Ctrl+Alt+L".into(),
         }
     }
 }
@@ -262,6 +270,8 @@ mod tests {
         assert_eq!(s.entry_sort, EntrySort::default());
         assert_eq!(s.clipboard_clear_seconds, 10);
         assert_eq!(s.idle_lock_minutes, 5);
+        assert_eq!(s.quick_search_hotkey, "Ctrl+Alt+K");
+        assert_eq!(s.lock_hotkey, "Ctrl+Alt+L");
         assert!(!s.lock_on_minimize);
         let _ = fs::remove_dir_all(&dir);
     }

@@ -9,12 +9,14 @@ use mikoshi_core::totp::TotpError;
 use mikoshi_core::{Credentials, Secret, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::AppState;
 use crate::clipboard;
 use crate::error::{AppError, AppResult};
+use crate::hotkeys;
 use crate::session::{self, Session, VaultStatus};
 use crate::settings::{Settings, Store};
 use crate::windows;
@@ -27,6 +29,8 @@ pub struct AppInfo {
     pub effects: bool,
     /// Running on demo data (only the browser mock does now)
     pub demo: bool,
+    /// Started with Windows: the main window stays hidden until asked for
+    pub start_hidden: bool,
 }
 
 #[derive(Serialize)]
@@ -79,6 +83,7 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         effects: state.effects,
         demo: false,
+        start_hidden: state.start_hidden,
     }
 }
 
@@ -89,17 +94,50 @@ pub fn get_settings(state: State<'_, AppState>) -> AppResult<Settings> {
 
 /// Saves what the user can change. The recent file list is not taken from
 /// the frontend (see `Settings::merge_from_ui`).
+///
+/// A changed hotkey is registered first. If it is not usable nothing is
+/// saved, the old hotkeys stay, and the error says why.
 #[tauri::command]
 pub fn set_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     settings: Settings,
 ) -> AppResult<Settings> {
-    let saved = {
-        let mut store = self::settings(&state)?;
-        let merged = store.current.merge_from_ui(settings);
-        store.save(merged.clone())?;
-        merged
+    let (merged, old) = {
+        let store = self::settings(&state)?;
+        let c = &store.current;
+        (
+            c.merge_from_ui(settings),
+            (c.quick_search_hotkey.clone(), c.lock_hotkey.clone()),
+        )
+    };
+    let keys = (&merged.quick_search_hotkey, &merged.lock_hotkey);
+    let keys_changed = keys != (&old.0, &old.1);
+    if keys_changed {
+        let status = hotkeys::apply(&app, keys.0, keys.1);
+        let problem = |changed: bool, s: hotkeys::State| match s {
+            hotkeys::State::Taken if changed => Some(AppError::HotkeyTaken),
+            hotkeys::State::Invalid if changed => Some(AppError::HotkeyInvalid),
+            _ => None,
+        };
+        let err = problem(*keys.0 != old.0, status.quick_search)
+            .or_else(|| problem(*keys.1 != old.1, status.lock));
+        if let Some(err) = err {
+            hotkeys::apply(&app, &old.0, &old.1);
+            return Err(err);
+        }
+    }
+    let saved = self::settings(&state)?
+        .save(merged.clone())
+        .map(|()| merged);
+    let saved = match saved {
+        Ok(s) => s,
+        Err(e) => {
+            if keys_changed {
+                hotkeys::apply(&app, &old.0, &old.1);
+            }
+            return Err(e);
+        }
     };
     let _ = app.emit("settings-changed", &saved);
     Ok(saved)
@@ -393,12 +431,51 @@ pub fn show_quick_search(app: AppHandle) -> AppResult<()> {
     })
 }
 
+/// `restore`: give the focus back to the window that was in front before
+/// (after copying, Esc); not when the box lost the focus to a click.
 #[tauri::command]
-pub fn hide_quick_search(app: AppHandle) -> AppResult<()> {
-    windows::hide_quick(&app).map_err(|e| {
+pub fn hide_quick_search(app: AppHandle, restore: bool) -> AppResult<()> {
+    windows::hide_quick(&app, restore).map_err(|e| {
         log::error!("cannot hide quick search: {e}");
         AppError::Window
     })
+}
+
+#[tauri::command]
+pub fn hotkey_status(app: AppHandle) -> hotkeys::Status {
+    hotkeys::status(&app)
+}
+
+/// Turns the global hotkeys off while the settings record a new one, and back
+/// on. Saving a hotkey also turns them back on.
+#[tauri::command]
+pub fn pause_hotkeys(app: AppHandle, paused: bool) -> hotkeys::Status {
+    hotkeys::pause(&app, paused)
+}
+
+/// Start with Windows. Windows keeps this setting (the Run key, and Task
+/// Manager can turn it off), so it is read from there, not from settings.json.
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> AppResult<bool> {
+    app.autolaunch().is_enabled().map_err(|e| {
+        log::error!("cannot read start with Windows: {e}");
+        AppError::Autostart
+    })
+}
+
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> AppResult<bool> {
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    result.map_err(|e| {
+        log::error!("cannot change start with Windows: {e}");
+        AppError::Autostart
+    })?;
+    get_autostart(app)
 }
 
 #[cfg(test)]

@@ -96,6 +96,8 @@ export interface AppInfo {
   version: string;
   effects: boolean;
   demo: boolean;
+  /** started with Windows: the main window stays hidden until asked for */
+  startHidden: boolean;
 }
 
 export interface CopyResult {
@@ -135,6 +137,17 @@ export interface Settings {
   /** minutes without input anywhere before locking; 0 = never */
   idleLockMinutes: number;
   lockOnMinimize: boolean;
+  /** global hotkeys like "Ctrl+Alt+K"; "" = off */
+  quickSearchHotkey: string;
+  lockHotkey: string;
+}
+
+/** What became of a hotkey from the settings. */
+export type HotkeyState = 'off' | 'active' | 'taken' | 'invalid';
+
+export interface HotkeyStatus {
+  quickSearch: HotkeyState;
+  lock: HotkeyState;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -146,6 +159,8 @@ export const DEFAULT_SETTINGS: Settings = {
   clipboardClearSeconds: 10,
   idleLockMinutes: 5,
   lockOnMinimize: false,
+  quickSearchHotkey: 'Ctrl+Alt+K',
+  lockHotkey: 'Ctrl+Alt+L',
 };
 
 /** KeePass field keys, plus the pseudo-field for the current TOTP code. */
@@ -177,6 +192,9 @@ export const ERROR_CODES = [
   'clipboard',
   'notYet',
   'settingsNotSaved',
+  'hotkeyInvalid',
+  'hotkeyTaken',
+  'autostart',
   'window',
   'internal',
 ] as const;

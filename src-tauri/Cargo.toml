@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 mikoshi-core = { path = "../crates/mikoshi-core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
@@ -26,12 +26,14 @@ zeroize.workspace = true
 # Win32 for the clipboard formats and auto-lock; the version Tauri already uses
 windows = { version = "0.62", features = [
   "Win32_Foundation",
+  "Win32_Globalization",
   "Win32_System_DataExchange",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Ole",
   "Win32_System_RemoteDesktop",
   "Win32_System_SystemInformation",
+  "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
@@ -41,3 +43,5 @@ serde_json.workspace = true
 thiserror = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 windows-version = "0.1"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"

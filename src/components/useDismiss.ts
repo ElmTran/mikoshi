@@ -1,6 +1,9 @@
 import { useEffect, type RefObject } from 'react';
 
-/** Closes a flyout on a click outside `ref` or on Escape (which goes no further). */
+/**
+ * Closes a flyout on a click outside `ref` or on Escape (which goes no
+ * further). An element marked `data-own-escape` handles Escape itself.
+ */
 export function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, close: () => void) {
   useEffect(() => {
     if (!open) return;
@@ -8,7 +11,7 @@ export function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, cl
       if (!ref.current?.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !(e.target as Element | null)?.closest?.('[data-own-escape]')) {
         e.stopPropagation();
         close();
       }

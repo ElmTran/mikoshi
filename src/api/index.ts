@@ -16,6 +16,7 @@ import {
   type EntrySummary,
   type ErrorCode,
   type GroupView,
+  type HotkeyStatus,
   type Settings,
   type TotpView,
   type VaultStatus,
@@ -78,10 +79,16 @@ export const api = {
   /** opens the entry's URL in the default browser (http and https only) */
   openUrl: (entryId: string) => call<void>('open_url', { entryId }),
   showQuickSearch: () => call<void>('show_quick_search'),
-  hideQuickSearch: () => call<void>('hide_quick_search'),
+  /** `restore`: give the focus back to the window that was in front before */
+  hideQuickSearch: (restore: boolean) => call<void>('hide_quick_search', { restore }),
+  hotkeyStatus: () => call<HotkeyStatus>('hotkey_status'),
+  /** while recording a new hotkey; saving one also ends the pause */
+  pauseHotkeys: (paused: boolean) => call<HotkeyStatus>('pause_hotkeys', { paused }),
+  getAutostart: () => call<boolean>('get_autostart'),
+  setAutostart: (enabled: boolean) => call<boolean>('set_autostart', { enabled }),
 };
 
-export type AppEvent = 'vault-changed' | 'settings-changed' | 'quick-shown';
+export type AppEvent = 'vault-changed' | 'settings-changed' | 'quick-shown' | 'hotkeys-changed';
 
 /** Subscribes to an event sent by the Rust side. Returns an unsubscribe function. */
 export async function listen<T>(event: AppEvent, handler: (payload: T) => void): Promise<() => void> {

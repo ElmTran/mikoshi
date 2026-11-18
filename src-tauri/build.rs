@@ -23,6 +23,10 @@ const COMMANDS: &[&str] = &[
     "open_url",
     "show_quick_search",
     "hide_quick_search",
+    "hotkey_status",
+    "pause_hotkeys",
+    "get_autostart",
+    "set_autostart",
 ];
 
 fn main() {

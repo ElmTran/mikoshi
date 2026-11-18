@@ -28,6 +28,8 @@ export interface ToastOptions {
   /** seconds until the clipboard clears; shows a draining bar */
   clearsAfter?: number | null;
   tone?: 'success' | 'info' | 'error';
+  /** how long it stays, for messages that need reading (default 2.8 s) */
+  seconds?: number;
 }
 
 export const ToastContext = createContext<(t: ToastOptions) => void>(() => {});

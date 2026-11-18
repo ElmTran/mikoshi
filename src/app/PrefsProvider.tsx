@@ -62,7 +62,13 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
         );
       }
       setSettings(next);
-      await api.setSettings(next);
+      try {
+        await api.setSettings(next);
+      } catch (e) {
+        // not saved (e.g. a hotkey another program has): show what is in effect
+        setSettings(settings);
+        throw e;
+      }
     },
     [settings, theme],
   );

@@ -1,6 +1,8 @@
-import { useCallback, useRef, useState, type MouseEvent } from 'react';
-import { usePrefs } from '../app/contexts';
-import type { LanguagePref, ThemePref } from '../api/types';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { api, listen } from '../api';
+import { AppError, type HotkeyStatus, type LanguagePref, type ThemePref } from '../api/types';
+import { usePrefs, useToast } from '../app/contexts';
+import { HotkeyField } from './HotkeyField';
 import { Icon, type IconName } from './Icon';
 import { useDismiss } from './useDismiss';
 
@@ -40,13 +42,33 @@ function Switch({
   );
 }
 
-/** Small flyout under the title bar: appearance, language, security. */
+/** Small flyout under the title bar: appearance, language, security, system. */
 export function SettingsButton() {
   const { t, tn, settings, update, info } = usePrefs();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, root, close);
+
+  // what the hotkeys and start-with-Windows are really doing, read on opening
+  const [hotkeys, setHotkeys] = useState<HotkeyStatus | null>(null);
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    api.hotkeyStatus().then(setHotkeys, () => {});
+    api.getAutostart().then(setAutostart, () => setAutostart(null));
+    const off = listen<HotkeyStatus>('hotkeys-changed', setHotkeys);
+    return () => void off.then((f) => f());
+  }, [open]);
+  const toggleAutostart = () => {
+    if (autostart === null) return;
+    api
+      .setAutostart(!autostart)
+      .then(setAutostart, (e: unknown) =>
+        toast({ message: t(`error.${e instanceof AppError ? e.code : 'internal'}`), tone: 'error' }),
+      );
+  };
 
   const pickTheme = (value: ThemePref, e: MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -142,6 +164,27 @@ export function SettingsButton() {
               label={t('settings.rememberKeyFiles')}
               hint={t('settings.rememberKeyFilesHint')}
               onToggle={() => void update({ rememberKeyFiles: !settings.rememberKeyFiles })}
+            />
+          </div>
+          <div className="flyout-section">
+            <div className="flyout-label">{t('settings.system')}</div>
+            <HotkeyField
+              label={t('settings.quickSearchHotkey')}
+              value={settings.quickSearchHotkey}
+              state={hotkeys?.quickSearch}
+              onSave={(text) => update({ quickSearchHotkey: text })}
+            />
+            <HotkeyField
+              label={t('settings.lockHotkey')}
+              value={settings.lockHotkey}
+              state={hotkeys?.lock}
+              onSave={(text) => update({ lockHotkey: text })}
+            />
+            <Switch
+              on={autostart === true}
+              label={t('settings.autostart')}
+              hint={t('settings.autostartHint')}
+              onToggle={toggleAutostart}
             />
           </div>
           {info && <div className="flyout-foot">{t('settings.version', { v: info.version })}</div>}

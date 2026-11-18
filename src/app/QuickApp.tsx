@@ -24,9 +24,10 @@ export function QuickApp() {
   const input = useRef<HTMLInputElement>(null);
   const hideTimer = useRef(0);
 
-  const hide = useCallback(() => {
+  /** `restore`: focus goes back to the window in front before (not after a click elsewhere) */
+  const hide = useCallback((restore = true) => {
     window.clearTimeout(hideTimer.current);
-    if (isTauri) void api.hideQuickSearch().catch(() => {});
+    if (isTauri) void api.hideQuickSearch(restore).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export function QuickApp() {
       }),
       // like a menu: clicking anywhere else closes it
       appWindow.onFocusChanged((focused) => {
-        if (!focused) hide();
+        if (!focused) hide(false);
       }),
     ];
     return () => offs.forEach((p) => void p.then((f) => f()));
@@ -75,7 +76,7 @@ export function QuickApp() {
     if (!e) return;
     if (action === 'autotype') {
       setFlash({ id: e.id, text: t('toast.autotype'), ok: false });
-      hideTimer.current = window.setTimeout(hide, 900);
+      hideTimer.current = window.setTimeout(() => hide(), 900);
       return;
     }
     if (action === 'totp' && !e.hasTotp) {
@@ -87,7 +88,7 @@ export function QuickApp() {
       () => {
         setFlash({ id: e.id, text: t('quick.copied'), ok: true });
         // copy, show the tick for a moment, then get out of the way
-        hideTimer.current = window.setTimeout(hide, 450);
+        hideTimer.current = window.setTimeout(() => hide(), 450);
       },
       (err: unknown) =>
         setFlash({
@@ -105,7 +106,7 @@ export function QuickApp() {
       e.preventDefault();
       fn();
     };
-    if (k === 'Escape') return handled(hide);
+    if (k === 'Escape') return handled(() => hide());
     if (!unlocked) return;
     if (k === 'ArrowDown') return handled(() => setIndex((i) => Math.min(results.length - 1, i + 1)));
     if (k === 'ArrowUp') return handled(() => setIndex((i) => Math.max(0, i - 1)));

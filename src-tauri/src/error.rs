@@ -47,6 +47,12 @@ pub enum AppError {
     NotYet,
     #[error("settings could not be saved")]
     SettingsNotSaved,
+    #[error("the hotkey is not usable")]
+    HotkeyInvalid,
+    #[error("another program already uses the hotkey")]
+    HotkeyTaken,
+    #[error("start with Windows could not be changed")]
+    Autostart,
     #[error("window operation failed")]
     Window,
     #[error("internal error")]

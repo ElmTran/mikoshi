@@ -208,12 +208,14 @@ function field(e: DemoEntry, key: string): string {
   }
 }
 
+let mockAutostart = false;
+
 export async function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
   const a = args as Record<string, string | null | undefined>;
   const result = ((): unknown => {
     switch (cmd) {
       case 'app_info':
-        return { version: '0.1.0', effects: false, demo: true };
+        return { version: '0.1.0', effects: false, demo: true, startHidden: false };
       case 'get_settings':
         return loadSettings();
       case 'set_settings': {
@@ -348,6 +350,17 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
         return null;
       case 'hide_quick_search':
         return null;
+      case 'hotkey_status':
+      case 'pause_hotkeys': {
+        const s = loadSettings();
+        const state = (k: string) => (k ? 'active' : 'off');
+        return { quickSearch: state(s.quickSearchHotkey), lock: state(s.lockHotkey) };
+      }
+      case 'get_autostart':
+        return mockAutostart;
+      case 'set_autostart':
+        mockAutostart = Boolean(args.enabled);
+        return mockAutostart;
       default:
         throw new AppError('internal');
     }
