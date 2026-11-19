@@ -134,7 +134,9 @@ pub fn run() {
                 // the program lives on in the tray; Quit is in the tray menu
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    let _ = window.hide();
+                    if let Some(w) = window.app_handle().get_webview_window("main") {
+                        let _ = windows::hide(&w);
+                    }
                 }
                 // optional: lock when minimized (features.md §3.2)
                 WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {

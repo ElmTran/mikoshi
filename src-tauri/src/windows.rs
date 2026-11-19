@@ -1,10 +1,15 @@
 //! Window handling: creating the windows, the Mica background, showing,
-//! sizing and focusing.
+//! hiding, sizing and focusing.
+//!
+//! A hidden window's WebView is put to sleep (`set_awake`), which gives most
+//! of its memory back. So every show and hide goes through `show` and `hide`
+//! here, never straight to the window.
 
 use std::sync::Mutex;
 
+use tauri::webview::PageLoadEvent;
 use tauri::window::{Effect, EffectsBuilder};
-use tauri::{AppHandle, Emitter, Manager, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -33,15 +38,114 @@ pub fn create_all(app: &AppHandle) -> tauri::Result<()> {
         if config.label == "main" && supports_mica() {
             builder = builder.effects(EffectsBuilder::new().effect(Effect::Mica).build());
         }
-        builder.build()?;
+        builder.on_page_load(sleep_if_left_hidden).build()?;
     }
     Ok(())
 }
 
+/// The windows are created hidden. The quick search box stays hidden until
+/// asked for, and so does the main window when started with Windows: once
+/// the page has loaded and set itself up, put it to sleep. (The main window
+/// otherwise shows itself when it has rendered.)
+fn sleep_if_left_hidden(w: WebviewWindow, payload: tauri::webview::PageLoadPayload<'_>) {
+    if payload.event() != PageLoadEvent::Finished {
+        return;
+    }
+    let app = w.app_handle();
+    let stays_hidden = w.label() == "quick" || app.state::<crate::AppState>().start_hidden;
+    if !stays_hidden {
+        return;
+    }
+    // "Finished" is the document load; give the page a moment to run its
+    // first commands and subscribe to the events it needs
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if !w.is_visible().unwrap_or(true) {
+            set_awake(&w, false);
+        }
+    });
+}
+
+/// Shows a window, waking its WebView first. Wake before anything is sent to
+/// the page: a suspended page does not run it.
+pub fn show(w: &WebviewWindow) -> tauri::Result<()> {
+    set_awake(w, true);
+    w.show()
+}
+
+/// Hides a window and puts its WebView to sleep.
+pub fn hide(w: &WebviewWindow) -> tauri::Result<()> {
+    w.hide()?;
+    set_awake(w, false);
+    Ok(())
+}
+
+/// Wakes a WebView or puts it to sleep. Asleep, it keeps the page (nothing
+/// reloads) but runs no script and trims its memory; waking takes a few
+/// milliseconds. Only for hidden windows: a visible WebView cannot sleep,
+/// and showing one wakes it anyway. Failures are logged; the window still
+/// works, it only keeps its memory.
+#[cfg(windows)]
+pub fn set_awake(w: &WebviewWindow, awake: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        ICoreWebView2_3, ICoreWebView2_19,
+    };
+    use windows_core::Interface;
+
+    let label = w.label().to_string();
+    let result = w.with_webview(move |webview| {
+        let controller = webview.controller();
+        // SAFETY: COM calls on the controller Tauri gave us, made on the
+        // thread that owns it (with_webview runs on the main thread)
+        let result = unsafe {
+            (|| -> windows_core::Result<()> {
+                // first: a visible WebView cannot be suspended
+                controller.SetIsVisible(awake)?;
+                let core = controller.CoreWebView2()?;
+                let level = if awake {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+                } else {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+                };
+                core.cast::<ICoreWebView2_19>()?
+                    .SetMemoryUsageTargetLevel(level)?;
+                let core = core.cast::<ICoreWebView2_3>()?;
+                if awake {
+                    core.Resume()
+                } else {
+                    let label = label.clone();
+                    let done = webview2_com::TrySuspendCompletedHandler::create(Box::new(
+                        move |result, suspended| {
+                            match result {
+                                Ok(()) if suspended => log::debug!("{label}: WebView asleep"),
+                                Ok(()) => log::debug!("{label}: WebView did not go to sleep"),
+                                Err(e) => log::warn!("{label}: WebView cannot sleep: {e}"),
+                            }
+                            Ok(())
+                        },
+                    ));
+                    core.TrySuspend(&done)
+                }
+            })()
+        };
+        if let Err(e) = result {
+            let what = if awake { "wake" } else { "put to sleep" };
+            log::warn!("{label}: cannot {what} the WebView: {e}");
+        }
+    });
+    if let Err(e) = result {
+        log::warn!("cannot reach the WebView of {}: {e}", w.label());
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_awake(_w: &WebviewWindow, _awake: bool) {}
+
 pub fn focus_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
-        let _ = w.show();
+        let _ = show(&w);
         let _ = w.set_focus();
     }
 }
@@ -58,7 +162,7 @@ pub fn show_main_if_frontend_is_stuck(app: &AppHandle) {
             && !w.is_visible().unwrap_or(true)
         {
             log::warn!("the frontend did not show the main window; showing it anyway");
-            let _ = w.show();
+            let _ = show(&w);
         }
     });
 }
@@ -92,7 +196,7 @@ pub fn show_quick_mode(app: &AppHandle, pick: bool) -> tauri::Result<()> {
         }
         w.set_size(tauri::LogicalSize::new(QUICK_SIZE.0, QUICK_SIZE.1))?;
         w.center()?;
-        w.show()?;
+        show(&w)?;
         w.set_focus()?;
         w.emit("quick-shown", QuickShown { pick })?;
     }
@@ -109,7 +213,7 @@ pub fn hide_quick(app: &AppHandle, restore: bool) -> tauri::Result<()> {
         // way, and it puts its keyboard focus back where it was. Activating
         // it while the box is still up left Windows 11 Notepad with the
         // focus on no control at all.
-        w.hide()?;
+        hide(&w)?;
         if restore && visible {
             // in case Windows picked another window; we may still hand the
             // focus on, having been in front a moment ago

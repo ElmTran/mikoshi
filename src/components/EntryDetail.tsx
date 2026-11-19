@@ -33,14 +33,15 @@ function Totp({ entryId }: { entryId: string }) {
 
   useEffect(() => {
     let live = true;
-    let timer = 0;
-    const load = () =>
+    // when the code shown rolls over (Date.now() time); 0 while loading or failed
+    let until = 0;
+    const load = () => {
+      until = 0;
       api.getTotp(entryId).then(
         (v) => {
           if (!live) return;
+          until = Date.now() + v.remaining * 1000;
           setTotp(v);
-          // the code is computed on the Rust side; refetch when it rolls over
-          timer = window.setTimeout(load, v.remaining * 1000 + 50);
         },
         (e: unknown) => {
           if (!live) return;
@@ -48,14 +49,20 @@ function Totp({ entryId }: { entryId: string }) {
           setInvalid(e instanceof AppError && e.code === 'totpInvalid');
         },
       );
-    void load();
-    const tick = window.setInterval(
-      () => setTotp((v) => (v ? { ...v, remaining: Math.max(0, v.remaining - 1) } : v)),
-      1000,
-    );
+    };
+    load();
+    // Count down by the clock, not by counting ticks: timers stop while the
+    // window is hidden and its WebView asleep, and a code must not be shown
+    // past its period. The code itself comes from the Rust side; refetch it
+    // when it rolls over.
+    const tick = window.setInterval(() => {
+      if (!until) return;
+      const left = Math.ceil((until - Date.now()) / 1000);
+      if (left <= 0) load();
+      else setTotp((v) => (v && v.remaining !== left ? { ...v, remaining: left } : v));
+    }, 1000);
     return () => {
       live = false;
-      window.clearTimeout(timer);
       window.clearInterval(tick);
     };
   }, [entryId]);

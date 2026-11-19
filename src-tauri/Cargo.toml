@@ -50,3 +50,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 windows-version = "0.1"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
+
+# Putting a hidden window's WebView to sleep (windows::set_awake). The same
+# versions wry uses, so the COM types match the controller Tauri hands out.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
