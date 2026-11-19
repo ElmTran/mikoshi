@@ -415,6 +415,64 @@
 
 **风险**：工作量估计在一两千行，比改 keepass-rs 大，但之后不再被上游卡住。为了不在这一步写坏真实的库，M6 只写测试库，应用里的保存要到 M7 才接上。
 
+## M6 检查点
+
+开发、测试都已完成，没有发现需要修的问题。2026-11-19 确认通过，tag `m6`。
+
+**做了什么**
+
+- 新 crate `crates/kdbx`（源码约 3500 行，含单元测试；另有约 290 行集成测试），结构见 architecture.md 的"KDBX 读写层"
+  - 读：KDBX 3.1、4.0、4.1；AES-KDF、Argon2d、Argon2id；AES-256、Twofish、ChaCha20；gzip；4.x 的 HMAC 分块和内层头部；3.1 的哈希分块；内层流 Salsa20、ChaCha20
+  - 写：只写 KDBX 4.1，沿用原来的加密算法、KDF 参数和压缩设置；3.1 升级时内层流换成 ChaCha20，时间改成 Base64，附件移进附件池
+  - 密钥：密码、5 种密钥文件、两者组合；`.kdb` 拒绝
+  - XML 树保留全部内容；受保护的值放在会擦除的内存里；编辑只动对应节点（为 M7 准备的 `set_field`、`push_history`、`add_group`、`add_entry`、`add_attachment`、`move_entry`）
+  - 密码学原语全部来自 RustCrypto（aes、twofish、cbc、chacha20、salsa20、argon2、sha2、hmac）和 flate2
+- `mikoshi-core` 改用 `kdbx`，keepass-rs 从依赖里去掉了（`Cargo.lock` 里已经没有）。TOTP 用的 hmac、sha1、sha2 升到和 `kdbx` 相同的版本
+- 错误码 `wrongKeyOrCorrupt` 删掉了：3.1 现在也能分清密码错误和文件损坏（K5）
+- `kdbx-compat` 改成检查 `kdbx`：以 `keepassxc-cli` 为准比对读取结果；往返后整棵 XML 树逐节点比对（空白也算）；K 系列一律算失败；新增 `fuzz` 子命令；`timing` 和 M0 记下的 keepass-rs 数据对比
+- K6–K9 的测试库放在 `tests/fixtures/foreign/`
+
+**开发中跑的自动检查**
+
+| 验收项 / 测试 | 结果 |
+|---|---|
+| 全部测试库读取结果和 KeePassXC 一致 | 10 个 keepassxc-cli 测试库：每个约 790 项和 `keepassxc-cli export` 完全相同；附件逐字节相同；6 种 TOTP 写法的验证码和 KeePassXC 相同 |
+| K 系列测试库全部通过 | K1、K2：全部测试库往返；K5：3.1 输错密码报"密码不对"，截断、翻转比特报"文件损坏"；K6–K9：`foreign/` 三个库都能打开，不认识的元素、`MasterKeyChangeForceOnce`、格式错误的时间戳保存后原样都在；K3、K4 由 M3 的 TOTP 解决 |
+| 往返保存后 KeePassXC 打开内容完整 | 10 个测试库、9 种加密算法 × KDF 组合、K 系列库：重新打开后的树逐节点相同；KeePassXC 看到的和原文件相同（唯一差异是 KeePassXC 对 KDBX 4 文件会显示 `SettingsChanged`，无害） |
+| 编辑后保存 | 改标题和密码、存历史、加受保护字段、新建分组和条目、加附件、移进回收站：KeePassXC 读回 8 项全对；没碰过的节点逐节点相同 |
+| 畸形输入不 panic | 截断、翻转比特、空文件、随机数据、KeePass 1 都报对了错误；模糊测试 10 万例（整个文件，以及解密后的内层头部、XML、3.1 转换、gzip 各层）没有 panic，被接受的 2 万多例保存再打开都和原来相同 |
+| 解锁时间和 keepass-rs 相当 | 都更快，见下表 |
+| M2–M5 回归（自动部分） | `pnpm check` 全部通过，其中 `mikoshi-core` 的 39 个测试（打开、视图不含秘密、搜索、TOTP、自动输入匹配）原样通过 |
+
+解锁耗时（release，本机；keepass-rs 一列是 M0 测的）：
+
+| KDF | kdbx | keepass-rs | keepassxc-cli |
+|---|---|---|---|
+| AES-KDF，1000 万轮 | 123 ms | 252 ms | 124 ms |
+| Argon2d，64 MiB，2 次（KeePass 2 默认） | 32 ms | 96 ms | 40 ms |
+| Argon2id，64 MiB，10 次 | 74 ms | 216 ms | 77 ms |
+| Argon2id，1 GiB，2 次 | 330 ms | 1083 ms | 481 ms |
+
+**还没验证的**
+
+- ~~KeePassXC 自己写出的 Argon2、ChaCha20、Twofish 库~~：已补上，见下面测试结果的最后一行
+- **KeePass 2 打开 `kdbx` 写的文件**：本机没装 KeePass 2。保存后的文件在 `target/kdbx-compat/saved/`、`variants/`、`foreign/`，密码都是 `mikoshi-test`
+- **KeePassDX** 等其他客户端：留到 M9 的人工验收
+
+**测试结果**（2026-11-19）
+
+| 测试 | 结果 |
+|---|---|
+| 应用回归（真实程序，驱动脚本） | 通过。6 个库（3.1、4.0、4.1、两种密钥文件、K8 库）：输错密码报"密码不对"，解锁约 120 ms，分组、条目、搜索、详情、显示密码、6 种 TOTP、自定义图标、锁定都正常；界面截图正常（3.1 库，含自定义图标、已过期标记、回收站）；复制用户名到剪贴板正常；闲置自动锁定也触发了 |
+| 新旧版本逐项对比 | 用 M5 的代码（keepass-rs）和现在的代码，把 10 个测试库的全部视图输出（分组、条目列表、详情、每个字段的值、TOTP、7 个搜索、5 个窗口的自动输入匹配和序列、自定义图标）各约 2.5 万行对比。差异只有三类，都是预期的：只含空格的字段现在读成空格（K2 修好了）；自定义图标按文件里的顺序列出（以前是哈希表顺序，前端按 ID 查，看不出区别）；"Group With Icon" 的标准图标编号从 48 变成 0，因为文件里存的就是 0（KeePassXC 导入时写的，它自己导出也是 0），以前 keepass-rs 丢掉了这个值（K1）、Mikoshi 补了默认值。有自定义图标时界面显示自定义图标，不受影响 |
+| 10 分钟模糊测试 | 通过。约 400 万例，其中 85.7 万例被接受并往返，没有 panic，没有往返差异 |
+| 你的库（`kdbx-compat check`，只读） | 通过。KDBX 4.1、AES-256、AES-KDF、密码 + 密钥文件，294 个条目、12 个分组：打开 36 ms；往返后整棵树逐节点相同，存储的 XML 12164 项无差异 |
+| KeePassXC 图形界面保存的库（`tests/fixtures/gui/` 的 4 个） | 通过。ChaCha20 + Argon2d、Twofish + Argon2id、AES-256 + AES-KDF、AES-256 + Argon2id + 密码 + 密钥文件（KeePassXC 默认的解锁时间设置）：读取和 KeePassXC 逐项相同（每个 862 项）、附件逐字节相同、TOTP 相同；往返后树逐节点相同，KeePassXC 读保存后的文件和原文件相同。解锁 0.1–0.6 秒 |
+
+快速搜索窗口没有单独测：隐藏时它的 WebView 处于休眠（M5 之后的省内存改动），脚本驱动不了，要显示它会抢你桌面的焦点；它调用的后台命令和主窗口相同，上面已经覆盖。
+
+测试时选过的测试库会进"最近打开"列表，测完已从设置文件里删掉，恢复成原来的样子。
+
 ## M7 条目编辑与保存
 
 **目标**：能安全地修改并保存库。**从这里开始 Mikoshi 会写 `.kdbx`，检查点通过之前请只用库的副本测试。**
@@ -507,7 +565,7 @@
 
 ## 待处理问题
 
-M0 发现的问题（详见 [m0-report.md](m0-report.md)）。2026-11-18 决定不修 keepass-rs，由 M6 自己写的读写层一并解决：K3、K4 在 M3 已经绕开，其余在 M6 各有一个测试库把关。K6 原本打算接受，新的读写层会原样保留不认识的元素，所以也一并解决。
+M0 发现的问题（详见 [m0-report.md](m0-report.md)）。2026-11-18 决定不修 keepass-rs，由 M6 自己写的读写层一并解决：K3、K4 在 M3 已经绕开，其余在 M6 各有一个测试库把关。K6 原本打算接受，新的读写层会原样保留不认识的元素，所以也一并解决。**M6 已全部解决**（K1–K9 各有测试把关，见 M6 检查点），下表的"影响"一列只对 M5 及之前的版本成立。
 
 | ID | 问题 | M6 之前的影响 |
 |---|---|---|

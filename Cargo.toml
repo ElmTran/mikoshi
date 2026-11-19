@@ -10,7 +10,6 @@ license = "MIT"
 rust-version = "1.90"
 
 [workspace.dependencies]
-keepass = { version = "0.17", features = ["save_kdbx4", "totp"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zeroize = { version = "1", features = ["zeroize_derive"] }
@@ -23,7 +22,16 @@ opt-level = 3
 [profile.test.package."*"]
 opt-level = 3
 
+# The KDF loops and ciphers are instantiated inside the kdbx crate itself, so
+# it needs the same treatment as the dependencies.
+[profile.dev.package.kdbx]
+opt-level = 3
+
+[profile.test.package.kdbx]
+opt-level = 3
+
 [profile.release]
-# keepass-rs panics on some malformed input (M0 issue K9); every call is
-# wrapped in catch_unwind, which needs unwinding. Never switch to "abort".
+# Opening a file is wrapped in catch_unwind as a last line of defence (a
+# damaged file must never take the app down), which needs unwinding. Never
+# switch to "abort".
 panic = "unwind"

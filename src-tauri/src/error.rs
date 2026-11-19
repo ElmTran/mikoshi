@@ -26,8 +26,6 @@ pub enum AppError {
     KeyFileUnreadable,
     #[error("wrong master password or key file")]
     WrongKey,
-    #[error("wrong master password or key file, or a damaged file (KDBX 3.1)")]
-    WrongKeyOrCorrupt,
     #[error("the database file is damaged")]
     Corrupt,
     #[error("unsupported database format or algorithm")]
@@ -76,7 +74,6 @@ impl From<OpenError> for AppError {
         match e {
             OpenError::NoKey => AppError::EmptyPassword,
             OpenError::WrongKey => AppError::WrongKey,
-            OpenError::WrongKeyOrCorrupt => AppError::WrongKeyOrCorrupt,
             OpenError::Corrupt => AppError::Corrupt,
             OpenError::Unsupported => AppError::Unsupported,
             OpenError::KeePass1 => AppError::KeePass1,

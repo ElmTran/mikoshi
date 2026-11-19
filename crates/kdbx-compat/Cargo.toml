@@ -1,14 +1,15 @@
 [package]
 name = "kdbx-compat"
 version = "0.1.0"
-description = "Developer tool: checks that keepass-rs reads and round-trips KDBX files without data loss"
+description = "Developer tool: checks that the kdbx crate reads and round-trips KDBX files like KeePassXC, without data loss"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish = false
 
 [dependencies]
-keepass.workspace = true
+kdbx = { path = "../kdbx" }
+mikoshi-core = { path = "../mikoshi-core" }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 roxmltree = "0.21"
@@ -18,7 +19,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 rpassword = "7"
 
 # Minimal KDBX 4 writer (src/writer.rs) for files keepassxc-cli cannot make.
-# Same versions keepass-rs already pulls in, so nothing is built twice.
+# Same versions the kdbx crate uses, so nothing is built twice.
 hmac = "0.13"
 aes = "0.9"
 cbc = "0.2"

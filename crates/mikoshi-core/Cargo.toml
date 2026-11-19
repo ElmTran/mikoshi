@@ -8,15 +8,14 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-keepass.workspace = true
+kdbx = { path = "../kdbx" }
 serde.workspace = true
 zeroize.workspace = true
 base64 = "0.23"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-# TOTP. The versions keepass-rs already pulls in (through totp-lite).
-hmac = "0.12"
-sha1 = "0.10"
-sha2 = "0.10"
+# TOTP. The same versions the kdbx crate uses.
+hmac = "0.13"
+sha1 = "0.11"
+sha2 = "0.11"
 percent-encoding = "2"
 # window associations written as //regex// (the version already in the tree)
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }

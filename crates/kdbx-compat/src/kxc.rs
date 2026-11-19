@@ -13,13 +13,15 @@ pub struct Key {
 }
 
 impl Key {
-    pub fn to_keepass(&self) -> std::io::Result<keepass::DatabaseKey> {
-        let mut key = keepass::DatabaseKey::new();
+    pub fn to_kdbx(&self) -> std::io::Result<kdbx::Key> {
+        let mut key = kdbx::Key::new();
         if let Some(p) = &self.password {
             key = key.with_password(p);
         }
         if let Some(k) = &self.keyfile {
-            key = key.with_keyfile(&mut std::fs::File::open(k)?)?;
+            key = key
+                .with_keyfile(&std::fs::read(k)?)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
         }
         Ok(key)
     }

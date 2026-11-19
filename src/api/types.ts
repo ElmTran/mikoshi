@@ -194,7 +194,6 @@ export const ERROR_CODES = [
   'fileUnreadable',
   'keyFileUnreadable',
   'wrongKey',
-  'wrongKeyOrCorrupt',
   'corrupt',
   'unsupported',
   'keePass1',

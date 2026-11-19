@@ -109,7 +109,6 @@ export const zhCN = {
   'error.fileUnreadable': '读不了这个文件。检查一下权限，或者它是不是被别的程序占用了',
   'error.keyFileUnreadable': '读不了这个密钥文件',
   'error.wrongKey': '主密码或密钥文件不对',
-  'error.wrongKeyOrCorrupt': '主密码或密钥文件不对，也可能是文件已损坏',
   'error.corrupt': '文件已损坏，打不开',
   'error.unsupported': '不支持这个文件的格式或加密方式',
   'error.keePass1': '这是 KeePass 1 的 .kdb 文件，Mikoshi 只支持 .kdbx',

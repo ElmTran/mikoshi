@@ -112,7 +112,6 @@ export const enUS: Record<MessageKey, string> = {
     'The file cannot be read. Check its permissions, or whether another program has it open.',
   'error.keyFileUnreadable': 'The key file cannot be read',
   'error.wrongKey': 'Wrong master password or key file',
-  'error.wrongKeyOrCorrupt': 'Wrong master password or key file, or the file is damaged',
   'error.corrupt': 'The file is damaged and cannot be opened',
   'error.unsupported': 'This file uses a format or encryption Mikoshi does not support',
   'error.keePass1': 'This is a KeePass 1 .kdb file. Mikoshi only supports .kdbx.',

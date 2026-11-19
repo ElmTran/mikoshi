@@ -10,7 +10,7 @@
 cargo run -p kdbx-compat --release
 ```
 
-报告写在 `target/kdbx-compat/report.md`。命令返回 0，说明没有出现已知问题以外的差异。
+报告写在 `target/kdbx-compat/report.md`。命令返回 0，说明 `crates/kdbx` 读到的内容和 KeePassXC 完全一致、保存后什么都没丢。M0 记下的 keepass-rs 问题（K1–K9）现在一律算失败。
 
 ## 目录
 
@@ -19,6 +19,7 @@ cargo run -p kdbx-compat --release
 | `src/content-31.xml` `content-40.xml` `content-41.xml` | 测试库的内容，KeePass 2 XML 格式 | `generate.py` 生成 |
 | `keys/` | 各种格式的密钥文件 | `generate.py` 生成 |
 | `kxc/` | keepassxc-cli 导入上面的 XML 得到的库 | `generate.py` 生成 |
+| `foreign/` | M0 问题 K6–K9 的测试库：不认识的元素、分组里的不认识元素、格式错误的时间戳。KeePassXC 导入 XML 时会丢掉这些，所以由 `kdbx-compat` 自带的最小写入器生成 | 缺失时 `kdbx-compat` 自动生成 |
 | `gui/` | 用 KeePassXC、KeePass 2 图形界面手工做的库 | 手工，见下文 |
 | `fixtures.toml` | 每个库的密码、密钥文件，以及预期的格式、加密算法、KDF | 手工维护 |
 
@@ -36,7 +37,7 @@ keepassxc-cli 只能生成 AES-256 + AES-KDF 的库。下面这些需要在图�
 
 ### KeePassXC（2.7 以上）
 
-先导入内容：菜单 **数据库 → 导入 → KeePass 1 / KeePass 2 XML**（不同版本菜单位置略有不同），选 `src/content-41.xml`，密码填 `mikoshi-test`。然后在 **数据库 → 数据库安全设置 → 加密设置** 里改设置，再 **另存为**：
+KeePassXC 的图形界面不能导入 KeePass 2 XML，所以从现成的测试库出发：把 `kxc/kdbx41-pw.kdbx` 复制到 `gui/`，改成下表的文件名（内容和 `src/content-41.xml` 相同）。在 KeePassXC 里打开这份副本（密码 `mikoshi-test`），在 **数据库 → 数据库安全设置 → 加密设置** 里改设置，然后直接 **保存**（Ctrl+S）。KeePassXC 会用它自己的写入器重写整个文件。不要打开 `kxc/` 里的原件改，以免自动保存把它覆盖了：
 
 | 文件名 | 加密算法 | KDF | 其他 |
 |---|---|---|---|
@@ -47,7 +48,7 @@ keepassxc-cli 只能生成 AES-256 + AES-KDF 的库。下面这些需要在图�
 
 解锁时间保持默认（1 秒左右）即可，这样也能顺便测出真实设置下的解锁速度。
 
-如果你的 KeePassXC 导入后保存成了 4.1 而不是 4.0，把 `fixtures.toml` 里对应的 `format` 改成 `4.1` 就行。
+内容里有 KDBX 4.1 的字段，所以保存出来是 4.1，`fixtures.toml` 里按 4.1 登记。
 
 ### KeePass 2（2.48 以上）
 

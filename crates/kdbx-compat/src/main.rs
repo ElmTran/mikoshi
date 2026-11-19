@@ -1,4 +1,4 @@
-//! kdbx-compat: checks that keepass-rs reads KeePass files exactly like
+//! kdbx-compat: checks that the kdbx crate reads KeePass files exactly like
 //! KeePassXC does, and that saving them loses nothing.
 //!
 //!   kdbx-compat [fixtures]          run every check on tests/fixtures, write the report
@@ -7,9 +7,10 @@
 //!                                   change; prints paths only, never values, and never
 //!                                   writes anything
 //!   kdbx-compat timing              time opening files with typical KDF settings
+//!   kdbx-compat fuzz [seconds] [seed]
+//!                                   feed mutated files and payloads to the reader
 
 mod canon;
-mod errors;
 mod header;
 mod kxc;
 mod model;
@@ -22,15 +23,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use keepass::Database;
-use keepass::config::{
-    DatabaseConfig, DatabaseVersion, InnerCipherConfig, KdfConfig, OuterCipherConfig,
-};
-use keepass::db::{GroupId, Value, fields};
+use kdbx::{Cipher, Database, Kdf};
 use serde::Deserialize;
 
 use canon::{Canon, Change, Diff, Source};
-use errors::Failure;
 use kxc::{Key, Kxc};
 
 // ---------------------------------------------------------------- shared
@@ -49,14 +45,27 @@ fn out_dir() -> PathBuf {
 
 #[derive(Debug)]
 enum OpenError {
-    Failed(Failure, String),
+    Failed(kdbx::Error),
+    Key(String),
     Panicked(String),
+}
+
+fn label(e: &kdbx::Error) -> String {
+    match e {
+        kdbx::Error::WrongKey => "wrong key".into(),
+        kdbx::Error::Corrupt(w) => format!("damaged ({w})"),
+        kdbx::Error::Unsupported(w) => format!("unsupported ({w})"),
+        kdbx::Error::NotKeePass => "not a KeePass file".into(),
+        kdbx::Error::KeePass1 => "KeePass 1 file".into(),
+        other => other.to_string(),
+    }
 }
 
 impl std::fmt::Display for OpenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OpenError::Failed(kind, msg) => write!(f, "{} ({msg})", kind.label()),
+            OpenError::Failed(e) => f.write_str(&label(e)),
+            OpenError::Key(msg) => write!(f, "key file: {msg}"),
             OpenError::Panicked(msg) => write!(f, "PANIC: {msg}"),
         }
     }
@@ -69,49 +78,39 @@ fn panic_message(p: Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "unknown panic".into())
 }
 
-/// Opens a database, turning panics inside keepass-rs into errors.
+/// Opens a database; a panic is reported as an error (and is always a bug).
 fn open(bytes: &[u8], key: &Key) -> Result<Database, OpenError> {
-    let dk = key
-        .to_keepass()
-        .map_err(|e| OpenError::Failed(Failure::Io, e.to_string()))?;
-    // keep expected panics out of the console; they are reported instead
+    let k = key.to_kdbx().map_err(|e| OpenError::Key(e.to_string()))?;
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
-    let result = catch_unwind(AssertUnwindSafe(|| Database::parse(bytes, dk)));
+    let result = catch_unwind(AssertUnwindSafe(|| Database::open(bytes, &k)));
     std::panic::set_hook(previous);
     match result {
         Ok(Ok(db)) => Ok(db),
-        Ok(Err(e)) => Err(OpenError::Failed(errors::classify(&e), e.to_string())),
+        Ok(Err(e)) => Err(OpenError::Failed(e)),
         Err(p) => Err(OpenError::Panicked(panic_message(p))),
     }
 }
 
 fn raw_xml(bytes: &[u8], key: &Key) -> Result<String, String> {
-    let dk = key.to_keepass().map_err(|e| e.to_string())?;
-    let xml = Database::get_xml(&mut &bytes[..], dk).map_err(|e| e.to_string())?;
-    String::from_utf8(xml).map_err(|e| e.to_string())
-}
-
-/// What the app will have to do before saving: keepass-rs only writes
-/// KDBX 4.1, so 3.1 and 4.0 files are upgraded. KDBX 4 normally uses ChaCha20
-/// for protected values (KeePass does the same when it upgrades a 3.1 file).
-fn prepare_for_save(db: &Database) -> Database {
-    let mut db = db.clone();
-    db.config.version = DatabaseVersion::KDB4(1);
-    if matches!(db.config.inner_cipher_config, InnerCipherConfig::Salsa20) {
-        db.config.inner_cipher_config = InnerCipherConfig::ChaCha20;
-    }
-    db
+    let k = key.to_kdbx().map_err(|e| e.to_string())?;
+    Database::inner_xml(bytes, &k)
+        .map(|x| x.to_string())
+        .map_err(|e| label(&e))
 }
 
 fn save(db: &Database, key: &Key) -> Result<Vec<u8>, String> {
-    let mut out = Vec::new();
-    let dk = key.to_keepass().map_err(|e| e.to_string())?;
-    match catch_unwind(AssertUnwindSafe(|| db.save(&mut out, dk))) {
-        Ok(Ok(())) => Ok(out),
-        Ok(Err(e)) => Err(e.to_string()),
+    let k = key.to_kdbx().map_err(|e| e.to_string())?;
+    match catch_unwind(AssertUnwindSafe(|| db.save(&k))) {
+        Ok(Ok(out)) => Ok(out),
+        Ok(Err(e)) => Err(label(&e)),
         Err(p) => Err(format!("PANIC: {}", panic_message(p))),
     }
+}
+
+/// Our reading of the file, in the form keepassxc-cli exports.
+fn our_view(db: &Database) -> Result<Canon, String> {
+    canon::parse(&db.plain_xml(), Source::Export)
 }
 
 fn ms(d: Duration) -> String {
@@ -126,112 +125,89 @@ fn kdf_name(k: &header::Kdf) -> &'static str {
     }
 }
 
-// ---------------------------------------------------------------- diff classification
+// ---------------------------------------------------------------- M0 issues
 
-/// Problems found while evaluating keepass-rs for M0. A run that only hits
-/// these is reported as "known issues", not as a failure, so the tool keeps
-/// working as a regression check once the issues are fixed or worked around.
-pub const KNOWN: &[(&str, &str)] = &[
+/// Problems M0 found in keepass-rs. The kdbx crate (M6) must not have any of
+/// them; each has a check below, and hitting one is a failure.
+pub const M0_ISSUES: &[(&str, &str, &str)] = &[
     (
         "K1",
-        "An entry or group with a custom icon loses its standard icon number (IconID), which other apps fall back to",
+        "An entry or group with a custom icon lost its standard icon number (IconID)",
+        "round trip of every fixture (tree compared node by node)",
     ),
     (
         "K2",
-        "A field whose value is only whitespace is read as empty (and saved empty)",
+        "A field whose value is only whitespace was read as empty (and saved empty)",
+        "read vs KeePassXC, round trip",
     ),
     (
         "K3",
-        "TOTP: an otpauth URI without `digits` gives 8 digits; the standard and KeePassXC use 6",
+        "TOTP: an otpauth URI without `digits` gave 8 digits",
+        "TOTP codes vs KeePassXC (Mikoshi's own TOTP since M3)",
     ),
-    ("K4", "TOTP: a lower-case Base32 secret cannot be parsed"),
+    (
+        "K4",
+        "TOTP: a lower-case Base32 secret could not be parsed",
+        "TOTP codes vs KeePassXC (Mikoshi's own TOTP since M3)",
+    ),
     (
         "K5",
-        "KDBX 3.1: a wrong key and a damaged file cannot be told apart (a wrong password usually surfaces as a padding error)",
+        "KDBX 3.1: a wrong key and a damaged file could not be told apart",
+        "wrong key on every fixture; damaged files",
     ),
     (
         "K6",
-        "XML elements keepass-rs does not know are dropped on save (KeePassXC drops them too)",
+        "Unknown XML elements were dropped on save",
+        "elements KeePassXC does not keep",
     ),
     (
         "K7",
-        "Meta/MasterKeyChangeForceOnce (KeePass 2: \"force changing the master key next time\") is dropped on save",
+        "Meta/MasterKeyChangeForceOnce was dropped on save",
+        "elements KeePassXC does not keep",
     ),
     (
         "K8",
-        "An unknown element directly inside a Group makes the whole file fail to open",
+        "An unknown element directly inside a Group made the file fail to open",
+        "elements KeePassXC does not keep",
     ),
     (
         "K9",
-        "A malformed timestamp makes keepass-rs panic instead of returning an error",
+        "A malformed timestamp caused a panic instead of an error",
+        "elements KeePassXC does not keep; fuzzing",
     ),
 ];
 
+// ---------------------------------------------------------------- diff classification
+
 enum Verdict {
     Benign(&'static str),
-    Known(&'static str),
     Real,
 }
 
-fn whitespace_only(v: &str) -> bool {
-    !v.is_empty() && v.trim().is_empty()
-}
-
 /// `before` is the document the diff started from, for context.
-fn classify_diff(d: &Diff, before: &Canon) -> Verdict {
+fn classify_diff(d: &Diff, _before: &Canon) -> Verdict {
     let p = d.path.as_str();
     match &d.change {
-        Change::Added(v) if p.ends_with("/QualityCheck") && v == "True" => {
-            Verdict::Benign("QualityCheck=True written explicitly (absent means True)")
-        }
-        Change::Added(v) if p.ends_with("/AutoType/DataTransferObfuscation") && v == "0" => {
-            Verdict::Benign("default value written explicitly")
-        }
         Change::Added(_) if p == "Meta/SettingsChanged" => {
             Verdict::Benign("KeePassXC shows a SettingsChanged time once the file is KDBX 4")
         }
-        Change::Missing(_)
-            if p.ends_with("/IconID")
-                && before.records.contains_key(&format!(
-                    "{}/CustomIconUUID",
-                    &p[..p.len() - "/IconID".len()]
-                )) =>
-        {
-            Verdict::Known("K1")
-        }
-        Change::Missing(v) | Change::Changed(v, _)
-            if p.ends_with("/Value") && whitespace_only(v) =>
-        {
-            Verdict::Known("K2")
-        }
-        Change::Missing(_)
-            if canon::segments(p)
-                .iter()
-                .any(|s| s.starts_with("MikoshiUnknown")) =>
-        {
-            Verdict::Known("K6")
-        }
-        Change::Missing(_) if p == "Meta/MasterKeyChangeForceOnce" => Verdict::Known("K7"),
         _ => Verdict::Real,
     }
 }
 
 struct Sorted<'a> {
     real: Vec<&'a Diff>,
-    known: Vec<(&'a Diff, &'static str)>,
     benign: Vec<(&'a Diff, &'static str)>,
 }
 
 fn sort_diffs<'a>(diffs: &'a [Diff], before: &Canon) -> Sorted<'a> {
     let mut s = Sorted {
         real: Vec::new(),
-        known: Vec::new(),
         benign: Vec::new(),
     };
     for d in diffs {
         match classify_diff(d, before) {
             Verdict::Benign(why) => s.benign.push((d, why)),
-            Verdict::Known(id) => s.known.push((d, id)),
             Verdict::Real => s.real.push(d),
         }
     }
@@ -248,9 +224,6 @@ fn report_diffs(
 ) {
     for d in &sorted.real {
         sec.fail(format!("{prefix} {}", describe(d, labels, show_values)));
-    }
-    for (d, id) in &sorted.known {
-        sec.known(id, format!("{prefix} {}", describe(d, labels, show_values)));
     }
     let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
     for (_, why) in &sorted.benign {
@@ -283,6 +256,24 @@ fn describe(d: &Diff, labels: &[&HashMap<String, String>], show_values: bool) ->
     }
 }
 
+/// The saved file reopened must hold exactly the same tree and attachments.
+fn same_tree(sec: &mut Section, before: &Database, after: &Database, what: &str) {
+    let diffs = model::tree_diff(before.document(), after.document(), 20);
+    if diffs.is_empty() && before.binaries() == after.binaries() {
+        sec.note(format!(
+            "{what}: XML tree identical node by node (whitespace included), {} attachments identical",
+            before.binaries().len()
+        ));
+        return;
+    }
+    for d in diffs {
+        sec.fail(format!("{what}: tree differs at {d}"));
+    }
+    if before.binaries() != after.binaries() {
+        sec.fail(format!("{what}: attachment pool differs"));
+    }
+}
+
 // ---------------------------------------------------------------- fixtures mode
 
 #[derive(Deserialize)]
@@ -308,7 +299,6 @@ struct FixtureSpec {
 struct Section {
     title: String,
     ok: bool,
-    known: Vec<&'static str>,
     lines: Vec<String>,
 }
 
@@ -317,7 +307,6 @@ impl Section {
         Section {
             title: title.into(),
             ok: true,
-            known: Vec::new(),
             lines: Vec::new(),
         }
     }
@@ -325,26 +314,14 @@ impl Section {
         self.ok = false;
         self.lines.push(line.into());
     }
-    fn known(&mut self, id: &'static str, line: impl Into<String>) {
-        self.mark_known(id);
-        self.lines.push(format!("[{id}] {}", line.into()));
-    }
-    fn mark_known(&mut self, id: &'static str) {
-        if !self.known.contains(&id) {
-            self.known.push(id);
-        }
-    }
     fn note(&mut self, line: impl Into<String>) {
         self.lines.push(line.into());
     }
-    fn status(&self) -> String {
-        if !self.ok {
-            "PROBLEMS".into()
-        } else if !self.known.is_empty() {
-            format!("ok, known issues {}", self.known.join(" "))
-        } else {
-            "ok".into()
-        }
+    fn check(&mut self, ok: bool, line: impl Into<String>) {
+        if ok { self.note(line) } else { self.fail(line) }
+    }
+    fn status(&self) -> &'static str {
+        if self.ok { "ok" } else { "PROBLEMS" }
     }
 }
 
@@ -369,29 +346,36 @@ impl Ctx {
             keyfile: spec.keyfile.as_ref().map(|k| self.fixtures.join(k)),
         }
     }
+
+    fn spec(&self, file: &str) -> Option<FixtureSpec> {
+        self.manifest
+            .fixture
+            .iter()
+            .find(|f| f.file == file)
+            .cloned()
+    }
+}
+
+fn load_ctx() -> Result<Ctx, String> {
+    let fixtures = workspace_root().join("tests").join("fixtures");
+    let manifest_text = std::fs::read_to_string(fixtures.join("fixtures.toml"))
+        .map_err(|e| format!("cannot read tests/fixtures/fixtures.toml: {e}"))?;
+    let manifest: Manifest =
+        toml::from_str(&manifest_text).map_err(|e| format!("bad fixtures.toml: {e}"))?;
+    Ok(Ctx {
+        fixtures,
+        manifest,
+        kxc: Kxc::find(),
+    })
 }
 
 fn run_fixtures() -> ExitCode {
-    let fixtures = workspace_root().join("tests").join("fixtures");
-    let manifest_text = match std::fs::read_to_string(fixtures.join("fixtures.toml")) {
-        Ok(t) => t,
+    let ctx = match load_ctx() {
+        Ok(c) => c,
         Err(e) => {
-            eprintln!("cannot read tests/fixtures/fixtures.toml: {e}");
+            eprintln!("{e}");
             return ExitCode::FAILURE;
         }
-    };
-    let manifest: Manifest = match toml::from_str(&manifest_text) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("bad fixtures.toml: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let kxc = Kxc::find();
-    let ctx = Ctx {
-        fixtures,
-        manifest,
-        kxc,
     };
     let _ = std::fs::create_dir_all(out_dir().join("saved"));
     let _ = std::fs::create_dir_all(out_dir().join("variants"));
@@ -405,7 +389,7 @@ fn run_fixtures() -> ExitCode {
         reports.push(r);
     }
 
-    eprintln!("\ncipher / KDF matrix written by keepass-rs ...");
+    eprintln!("\ncipher / KDF matrix ...");
     let matrix = run_matrix(&ctx);
     eprintln!("elements KeePassXC does not keep ...");
     let foreign = run_foreign(&ctx);
@@ -413,8 +397,10 @@ fn run_fixtures() -> ExitCode {
     let damaged = run_damaged(&ctx);
     eprintln!("editing ...");
     let editing = run_edit(&ctx);
+    eprintln!("fuzzing (15 s) ...");
+    let fuzz = run_fuzz_section(&ctx, Duration::from_secs(15), 0x6d696b6f736869);
 
-    let extra = [&matrix, &foreign, &damaged, &editing];
+    let extra = [&matrix, &foreign, &damaged, &editing, &fuzz];
     let report = render_report(&ctx, &reports, &extra, started.elapsed());
     let path = out_dir().join("report.md");
     if let Err(e) = std::fs::write(&path, &report) {
@@ -456,7 +442,6 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
         }
     };
     let key = ctx.key(spec);
-    let labels_holder;
 
     // ---- header
     let mut sec = Section::new("Header");
@@ -486,7 +471,7 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
     let db = match open(&bytes, &key) {
         Ok(db) => db,
         Err(e) => {
-            sec.fail(format!("keepass-rs cannot open it: {e}"));
+            sec.fail(format!("cannot open it: {e}"));
             report.sections.push(sec);
             report.status = "FAIL";
             report.summary = "cannot open".into();
@@ -497,50 +482,40 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
     sec.note(format!(
         "opened in {} ({} entries, {} groups)",
         ms(open_time),
-        db.iter_all_entries().count(),
-        db.iter_all_groups().count()
+        db.entries().len(),
+        db.groups().len()
     ));
     report.sections.push(sec);
-
-    let ours = model::from_database(&db);
 
     // ---- read vs KeePassXC
     let mut theirs: Option<Canon> = None;
     if let Some(kxc) = &ctx.kxc {
-        let mut sec = Section::new("Read: keepass-rs vs KeePassXC");
-        match kxc
-            .export_xml(&path, &key)
-            .and_then(|x| canon::parse(&x, Source::Export))
-        {
-            Ok(c) => {
-                // KeePassXC stamps _LAST_MODIFIED with the export time
-                let mut ours_cmp = ours.clone();
-                ours_cmp
-                    .records
-                    .retain(|k, _| !k.ends_with("Item[_LAST_MODIFIED]/Value"));
-                let diffs = canon::diff(&c, &ours_cmp);
+        let mut sec = Section::new("Read: kdbx vs KeePassXC");
+        match (
+            kxc.export_xml(&path, &key)
+                .and_then(|x| canon::parse(&x, Source::Export)),
+            our_view(&db),
+        ) {
+            (Ok(c), Ok(ours)) => {
+                let diffs = canon::diff(&c, &ours);
                 let labels = [&c.labels, &ours.labels];
                 let sorted = sort_diffs(&diffs, &c);
-                if sorted.real.is_empty() && sorted.known.is_empty() {
+                if sorted.real.is_empty() {
                     sec.note(format!("identical ({} records compared)", c.records.len()));
                 }
                 let mut sub = Section::new("");
                 report_diffs(&mut sub, &sorted, &labels, "", true);
                 for l in sub.lines {
-                    let l = l
-                        .replace("- LOST    ", "- ONLY IN KEEPASSXC")
-                        .replace("- ADDED   ", "- ONLY IN KEEPASS-RS");
-                    sec.lines.push(l);
+                    sec.lines.push(
+                        l.replace("- LOST    ", "- ONLY IN KEEPASSXC")
+                            .replace("- ADDED   ", "- ONLY IN KDBX"),
+                    );
                 }
                 sec.ok &= sub.ok;
-                for k in sub.known {
-                    if !sec.known.contains(&k) {
-                        sec.known.push(k);
-                    }
-                }
                 theirs = Some(c);
             }
-            Err(e) => sec.fail(format!("keepassxc-cli export failed: {e}")),
+            (Err(e), _) => sec.fail(format!("keepassxc-cli export failed: {e}")),
+            (_, Err(e)) => sec.fail(format!("cannot parse our own export: {e}")),
         }
         attachments_vs_kxc(kxc, &path, &key, &db, &mut sec, "original");
         totp_vs_kxc(kxc, &path, &key, &db, &mut sec);
@@ -560,19 +535,15 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
     };
     match open(&bytes, &wrong) {
         Ok(_) => sec.fail("opened with a wrong password!"),
-        Err(OpenError::Failed(Failure::WrongKey, _)) => sec.note("reported as wrong key"),
-        Err(OpenError::Failed(Failure::Ambiguous, msg)) if spec.format == "3.1" => {
-            sec.known("K5", format!("reported as \"{msg}\""))
-        }
+        Err(OpenError::Failed(kdbx::Error::WrongKey)) => sec.note("reported as wrong key"),
         Err(e) => sec.fail(format!("wrong password reported as: {e}")),
     }
     report.sections.push(sec);
 
     // ---- round trip
     let mut sec = Section::new("Round trip: open → save → reopen");
-    let prepared = prepare_for_save(&db);
     let t = Instant::now();
-    let saved = match save(&prepared, &key) {
+    let saved = match save(&db, &key) {
         Ok(s) => s,
         Err(e) => {
             sec.fail(format!("save failed: {e}"));
@@ -590,7 +561,26 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
     let saved_path = out_dir().join("saved").join(&saved_name);
     let _ = std::fs::write(&saved_path, &saved);
     match header::read(&saved) {
-        Ok(h) => sec.note(format!("saved in {} as {h}", ms(save_time))),
+        Ok(h) => {
+            sec.note(format!("saved in {} as {h}", ms(save_time)));
+            let before = header::read(&bytes).ok();
+            if let Some(b) = before {
+                sec.check(
+                    h.cipher == b.cipher && h.compression == b.compression,
+                    format!(
+                        "cipher and compression kept: {}, {}",
+                        h.cipher, h.compression
+                    ),
+                );
+                let same_kdf = match (&h.kdf, &b.kdf) {
+                    (header::Kdf::Aes { rounds: a, .. }, header::Kdf::Aes { rounds: c, .. }) => {
+                        a == c
+                    }
+                    (x, y) => x == y,
+                };
+                sec.check(same_kdf, format!("KDF parameters kept: {}", h.kdf));
+            }
+        }
         Err(e) => sec.fail(format!("saved file has a bad header: {e}")),
     }
 
@@ -604,46 +594,20 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
             return report;
         }
     };
-
-    // keepass-rs' own view before and after
-    let after = model::from_database(&reopened);
-    let model_diffs = canon::diff(&ours, &after);
-    let labels = [&ours.labels];
-    if model_diffs.is_empty() {
-        sec.note("keepass-rs model before vs after: identical");
-    } else {
-        report_diffs(
-            &mut sec,
-            &sort_diffs(&model_diffs, &ours),
-            &labels,
-            "keepass-rs model",
-            true,
-        );
-    }
-    if model::attachments(&db) == model::attachments(&reopened) {
-        sec.note(format!(
-            "attachments (history included): {} identical",
-            model::attachments(&db).len()
-        ));
-    } else {
-        sec.fail("attachment contents changed");
-    }
+    same_tree(&mut sec, &db, &reopened, "kdbx before vs after");
 
     // the XML actually stored in the file, before and after
     match (raw_xml(&bytes, &key), raw_xml(&saved, &key)) {
         (Ok(a), Ok(b)) => match (canon::parse(&a, Source::Raw), canon::parse(&b, Source::Raw)) {
             (Ok(ca), Ok(cb)) => {
                 let diffs = canon::diff(&ca, &cb);
-                labels_holder = ca.labels.clone();
-                let labels = [&labels_holder];
+                let labels = [&ca.labels];
                 let sorted = sort_diffs(&diffs, &ca);
-                if sorted.real.is_empty() && sorted.known.is_empty() {
+                if sorted.real.is_empty() {
                     sec.note(format!(
                         "stored XML: nothing lost ({} records compared)",
                         ca.records.len()
                     ));
-                } else {
-                    sec.note(format!("stored XML: {} records compared", ca.records.len()));
                 }
                 report_diffs(&mut sec, &sorted, &labels, "stored XML", true);
             }
@@ -662,7 +626,7 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
                 let diffs = canon::diff(theirs, &after_kxc);
                 let labels = [&theirs.labels];
                 let sorted = sort_diffs(&diffs, theirs);
-                if sorted.real.is_empty() && sorted.known.is_empty() {
+                if sorted.real.is_empty() {
                     sec.note("KeePassXC reads the saved file the same as the original");
                 }
                 report_diffs(&mut sec, &sorted, &labels, "KeePassXC sees", true);
@@ -679,24 +643,9 @@ fn check_fixture(ctx: &Ctx, spec: &FixtureSpec) -> FixtureReport {
         .filter(|s| !s.ok)
         .map(|s| s.title.as_str())
         .collect();
-    let mut known: Vec<&str> = report
-        .sections
-        .iter()
-        .flat_map(|s| s.known.iter().copied())
-        .collect();
-    known.sort();
-    known.dedup();
     report.status = if failures.is_empty() { "ok" } else { "FAIL" };
     report.summary = if failures.is_empty() {
-        format!(
-            "opened in {}{}",
-            ms(open_time),
-            if known.is_empty() {
-                String::new()
-            } else {
-                format!("; known issues {}", known.join(" "))
-            }
-        )
+        format!("opened in {}, saved in {}", ms(open_time), ms(save_time))
     } else {
         format!("problems in: {}", failures.join("; "))
     };
@@ -748,33 +697,29 @@ fn attachments_vs_kxc(
 }
 
 fn totp_vs_kxc(kxc: &Kxc, path: &Path, key: &Key, db: &Database, sec: &mut Section) {
+    use mikoshi_core::totp::{self, Totp};
     let entries = model::cli_entry_paths(db);
     let mut checked = 0;
-    for e in db.iter_all_entries() {
-        if e.get(fields::OTP).is_none() {
+    for e in db.entries() {
+        let fields: HashMap<String, String> = e
+            .fields()
+            .map(|f| (f.key().into_owned(), f.value().into_owned()))
+            .collect();
+        let get = |k: &str| fields.get(k).map(String::as_str);
+        if !totp::has_totp(get) {
             continue;
         }
+        let Some(id) = e.uuid() else { continue };
         let Some((_, cli)) = entries
             .iter()
-            .find(|(p, _)| p.ends_with(&format!("Entry[{}]", base64_uuid(e.id().uuid()))))
+            .find(|(p, _)| p.ends_with(&format!("Entry[{}]", id.to_base64())))
         else {
             continue;
         };
-        let raw = e.get(fields::OTP).unwrap_or("");
-        let ours = match e.get_otp() {
+        let ours = match Totp::from_fields(get) {
             Ok(t) => t,
             Err(err) => {
-                let secret = raw
-                    .split("secret=")
-                    .nth(1)
-                    .and_then(|s| s.split('&').next())
-                    .unwrap_or("");
-                let line = format!("TOTP of \"{cli}\": keepass-rs cannot parse it ({err})");
-                if secret.chars().any(|c| c.is_ascii_lowercase()) {
-                    sec.known("K4", line)
-                } else {
-                    sec.fail(line)
-                }
+                sec.fail(format!("TOTP of \"{cli}\": cannot parse it ({err:?})"));
                 continue;
             }
         };
@@ -800,25 +745,15 @@ fn totp_vs_kxc(kxc: &Kxc, path: &Path, key: &Key, db: &Database, sec: &mut Secti
             .to_string();
         let mut mine: Vec<String> = [before, after]
             .iter()
-            .map(|&t| ours.value_at(t).code)
+            .map(|&t| ours.code_at(t).code)
             .collect();
         mine.dedup();
         checked += 1;
         if !mine.contains(&theirs_code) {
-            let line = format!(
-                "TOTP of \"{cli}\" differs: keepass-rs {}, KeePassXC {theirs_code}",
+            sec.fail(format!(
+                "TOTP of \"{cli}\" differs: Mikoshi {}, KeePassXC {theirs_code}",
                 mine.join(" or ")
-            );
-            if !raw.contains("digits=")
-                && theirs_code.len() == 6
-                && mine
-                    .iter()
-                    .any(|m| m.len() == 8 && m.ends_with(&theirs_code))
-            {
-                sec.known("K3", line);
-            } else {
-                sec.fail(line);
-            }
+            ));
         }
     }
     if checked > 0 {
@@ -826,54 +761,26 @@ fn totp_vs_kxc(kxc: &Kxc, path: &Path, key: &Key, db: &Database, sec: &mut Secti
     }
 }
 
-fn base64_uuid(u: impl AsRef<[u8]>) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.encode(u.as_ref())
-}
-
 // ---------------------------------------------------------------- cipher / KDF matrix
 
-fn fast_kdfs() -> Vec<(&'static str, KdfConfig)> {
-    let version = match DatabaseConfig::default().kdf_config {
-        KdfConfig::Argon2 { version, .. } => version,
-        _ => unreachable_version(),
+fn fast_kdfs() -> Vec<(&'static str, Kdf)> {
+    let argon = |id| Kdf::Argon2 {
+        id,
+        memory: 16 * 1024 * 1024,
+        iterations: 2,
+        parallelism: 2,
+        version: 0x13,
     };
     vec![
-        ("AES-KDF", KdfConfig::Aes { rounds: 100_000 }),
-        (
-            "Argon2d",
-            KdfConfig::Argon2 {
-                iterations: 2,
-                memory: 16 * 1024 * 1024,
-                parallelism: 2,
-                version,
-            },
-        ),
-        (
-            "Argon2id",
-            KdfConfig::Argon2id {
-                iterations: 2,
-                memory: 16 * 1024 * 1024,
-                parallelism: 2,
-                version,
-            },
-        ),
+        ("AES-KDF", Kdf::Aes { rounds: 100_000 }),
+        ("Argon2d", argon(false)),
+        ("Argon2id", argon(true)),
     ]
 }
 
-fn unreachable_version() -> ! {
-    panic!("keepass-rs default config no longer uses Argon2")
-}
-
 fn run_matrix(ctx: &Ctx) -> Section {
-    let mut sec = Section::new("Cipher / KDF matrix written by keepass-rs");
-    let Some(spec) = ctx
-        .manifest
-        .fixture
-        .iter()
-        .find(|f| f.file == "kxc/kdbx41-pw.kdbx")
-        .cloned()
-    else {
+    let mut sec = Section::new("Cipher / KDF matrix written by kdbx");
+    let Some(spec) = ctx.spec("kxc/kdbx41-pw.kdbx") else {
         sec.fail("base fixture kxc/kdbx41-pw.kdbx missing from the manifest");
         return sec;
     };
@@ -887,7 +794,6 @@ fn run_matrix(ctx: &Ctx) -> Section {
         sec.fail("cannot open base fixture");
         return sec;
     };
-    let base_model = model::from_database(&db);
     let base_export = ctx
         .kxc
         .as_ref()
@@ -895,19 +801,26 @@ fn run_matrix(ctx: &Ctx) -> Section {
         .and_then(|x| canon::parse(&x, Source::Export).ok());
 
     sec.note(
-        "| cipher | KDF | keepass-rs reopens | KeePassXC opens | KeePassXC sees same data |"
-            .to_string(),
+        "| cipher | KDF | kdbx reopens, same tree | KeePassXC opens | KeePassXC sees same data |",
     );
-    sec.note("|---|---|---|---|---|".to_string());
+    sec.note("|---|---|---|---|---|");
+    let mut variant = match open(&bytes, &key) {
+        Ok(v) => v,
+        Err(e) => {
+            sec.fail(format!("cannot open base fixture: {e}"));
+            return sec;
+        }
+    };
     for (cipher_name, cipher) in [
-        ("AES-256", OuterCipherConfig::AES256),
-        ("Twofish", OuterCipherConfig::Twofish),
-        ("ChaCha20", OuterCipherConfig::ChaCha20),
+        ("AES-256", Cipher::Aes256),
+        ("Twofish", Cipher::Twofish),
+        ("ChaCha20", Cipher::ChaCha20),
     ] {
         for (kdf_name, kdf) in fast_kdfs() {
-            let mut variant = prepare_for_save(&db);
-            variant.config.outer_cipher_config = cipher.clone();
-            variant.config.kdf_config = kdf;
+            let mut s = variant.settings();
+            s.cipher = cipher;
+            s.kdf = kdf;
+            variant.set_settings(&s);
             let file = out_dir().join("variants").join(format!(
                 "{}-{}.kdbx",
                 cipher_name.to_lowercase(),
@@ -924,7 +837,7 @@ fn run_matrix(ctx: &Ctx) -> Section {
             };
             let _ = std::fs::write(&file, &saved);
             let reopen = match open(&saved, &key) {
-                Ok(r) if canon::diff(&base_model, &model::from_database(&r)).is_empty() => {
+                Ok(r) if r.document() == db.document() && r.binaries() == db.binaries() => {
                     "yes".to_string()
                 }
                 Ok(_) => "data differs".to_string(),
@@ -938,15 +851,10 @@ fn run_matrix(ctx: &Ctx) -> Section {
                     Ok(c) => {
                         let d = canon::diff(base, &c);
                         let sorted = sort_diffs(&d, base);
-                        let mut known: Vec<&str> = sorted.known.iter().map(|(_, id)| *id).collect();
-                        known.sort();
-                        known.dedup();
-                        let verdict = if !sorted.real.is_empty() {
-                            format!("{} differences", sorted.real.len())
-                        } else if !known.is_empty() {
-                            format!("yes, except known {}", known.join(" "))
-                        } else {
+                        let verdict = if sorted.real.is_empty() {
                             "yes".to_string()
+                        } else {
+                            format!("{} differences", sorted.real.len())
                         };
                         ("yes".to_string(), verdict)
                     }
@@ -955,20 +863,11 @@ fn run_matrix(ctx: &Ctx) -> Section {
                 _ => ("(no keepassxc-cli)".to_string(), "-".to_string()),
             };
             let row = format!("| {cipher_name} | {kdf_name} | {reopen} | {opens} | {same} |");
-            if reopen == "yes" && opens.starts_with("yes") && same.starts_with("yes") {
-                if let Some(rest) = same.strip_prefix("yes, except known ") {
-                    for id in rest.split(' ') {
-                        if let Some(id) = KNOWN.iter().find(|(k, _)| *k == id).map(|(k, _)| *k)
-                            && !sec.known.contains(&id)
-                        {
-                            sec.known.push(id);
-                        }
-                    }
-                }
-                sec.note(row);
-            } else {
-                sec.fail(row);
-            }
+            sec.check(
+                reopen == "yes" && opens.starts_with("yes") && same == "yes"
+                    || reopen == "yes" && opens == "(no keepassxc-cli)",
+                row,
+            );
         }
     }
     sec
@@ -976,27 +875,19 @@ fn run_matrix(ctx: &Ctx) -> Section {
 
 // ---------------------------------------------------------------- elements KeePassXC does not keep
 
-/// KeePassXC drops unknown elements when it imports XML, so these files are
-/// written by our own minimal writer (src/writer.rs) from the fixture content.
-fn run_foreign(ctx: &Ctx) -> Section {
+/// Test databases for M0 issues K6–K9. KeePassXC drops unknown elements when
+/// it imports XML, so these are written by our own minimal writer
+/// (src/writer.rs) from the fixture content, once, into tests/fixtures/foreign/.
+fn foreign_cases(
+    content: &str,
+) -> Vec<(&'static str, &'static str, String, Vec<writer::Injection>)> {
     use writer::{Injection, Target};
-    let mut sec = Section::new("Elements KeePassXC does not keep (files written by src/writer.rs)");
-    let Ok(content) = std::fs::read_to_string(ctx.fixtures.join("src/content-41.xml")) else {
-        sec.fail("tests/fixtures/src/content-41.xml missing; run tests/fixtures/generate.py");
-        return sec;
-    };
-    let password = ctx.manifest.password.clone();
-    let key = Key {
-        password: Some(password.clone()),
-        keyfile: None,
-    };
-    let dir = out_dir().join("foreign");
-    let _ = std::fs::create_dir_all(&dir);
-
-    let cases: Vec<(&str, String, Vec<Injection>)> = vec![
+    vec![
         (
-            "unknown elements in Meta, Root, Entry, AutoType + KeePass 2's MasterKeyChangeForceOnce",
-            content.clone(),
+            "k6-k7-unknown-elements.kdbx",
+            // the content already has KeePass 2's MasterKeyChangeForceOnce (K7)
+            "K6, K7: unknown elements in Meta, Root, Entry, AutoType + KeePass 2's MasterKeyChangeForceOnce",
+            content.to_string(),
             vec![
                 Injection {
                     target: Target::Meta,
@@ -1017,15 +908,17 @@ fn run_foreign(ctx: &Ctx) -> Section {
             ],
         ),
         (
-            "unknown element directly inside a Group",
-            content.clone(),
+            "k8-unknown-in-group.kdbx",
+            "K8: unknown element directly inside a Group",
+            content.to_string(),
             vec![Injection {
                 target: Target::Group("General"),
                 xml: "<MikoshiUnknownGroup>group-level unknown element</MikoshiUnknownGroup>",
             }],
         ),
         (
-            "malformed (too short) timestamp",
+            "k9-bad-timestamp.kdbx",
+            "K9: malformed (too short) timestamp",
             content.replacen(
                 "<LastAccessTime>2024-01-10T08:00:00Z</LastAccessTime>",
                 "<LastAccessTime>AAAA</LastAccessTime>",
@@ -1033,78 +926,73 @@ fn run_foreign(ctx: &Ctx) -> Section {
             ),
             vec![],
         ),
-    ];
+    ]
+}
 
-    for (i, (what, xml, injections)) in cases.into_iter().enumerate() {
-        let file = dir.join(format!("foreign-{}.kdbx", (b'a' + i as u8) as char));
-        let bytes = match writer::write(&xml, &password, &injections) {
+fn run_foreign(ctx: &Ctx) -> Section {
+    let mut sec = Section::new("Elements KeePassXC does not keep (K6–K9)");
+    let Ok(content) = std::fs::read_to_string(ctx.fixtures.join("src/content-41.xml")) else {
+        sec.fail("tests/fixtures/src/content-41.xml missing; run tests/fixtures/generate.py");
+        return sec;
+    };
+    let password = ctx.manifest.password.clone();
+    let key = Key {
+        password: Some(password.clone()),
+        keyfile: None,
+    };
+    let dir = ctx.fixtures.join("foreign");
+    let _ = std::fs::create_dir_all(&dir);
+    let saved_dir = out_dir().join("foreign");
+    let _ = std::fs::create_dir_all(&saved_dir);
+
+    for (name, what, xml, injections) in foreign_cases(&content) {
+        let file = dir.join(name);
+        let bytes = match std::fs::read(&file) {
             Ok(b) => b,
-            Err(e) => {
-                sec.fail(format!("{what}: cannot write test file: {e}"));
-                continue;
-            }
+            Err(_) => match writer::write(&xml, &password, &injections) {
+                Ok(b) => {
+                    let _ = std::fs::write(&file, &b);
+                    sec.note(format!("{what}: wrote tests/fixtures/foreign/{name}"));
+                    b
+                }
+                Err(e) => {
+                    sec.fail(format!("{what}: cannot write test file: {e}"));
+                    continue;
+                }
+            },
         };
-        let _ = std::fs::write(&file, &bytes);
-        let kxc_view = ctx.kxc.as_ref().map(|k| k.export_xml(&file, &key));
-        match &kxc_view {
-            Some(Ok(_)) if injections.is_empty() => sec.note(format!("{what}: KeePassXC opens it")),
-            Some(Ok(x)) => {
-                let kept: Vec<&str> = ["MikoshiUnknown", "MasterKeyChangeForceOnce"]
-                    .into_iter()
-                    .filter(|n| x.contains(n))
-                    .collect();
-                sec.note(format!(
-                    "{what}: KeePassXC opens it{}",
-                    if kept.is_empty() {
-                        " and drops the extra elements".to_string()
-                    } else {
-                        format!(", keeps {}", kept.join(", "))
-                    }
-                ));
-            }
-            Some(Err(e)) if what.starts_with("malformed") => {
-                sec.note(format!("{what}: KeePassXC refuses it too ({e})"))
-            }
-            Some(Err(e)) => {
-                sec.fail(format!(
-                    "{what}: KeePassXC cannot open the test file, so the writer is wrong: {e}"
-                ));
-                continue;
-            }
-            None => {}
-        }
-
+        let kxc_opens = ctx.kxc.as_ref().map(|k| k.export_xml(&file, &key).is_ok());
         let db = match open(&bytes, &key) {
             Ok(db) => db,
-            Err(OpenError::Panicked(msg)) if what.starts_with("malformed") => {
-                sec.known("K9", format!("{what}: keepass-rs panics ({msg})"));
-                continue;
-            }
-            Err(e) if what.starts_with("malformed") => {
-                sec.note(format!("{what}: keepass-rs refuses it with an error: {e}"));
-                continue;
-            }
-            Err(e) if what.contains("inside a Group") => {
-                sec.known(
-                    "K8",
-                    format!("{what}: keepass-rs cannot open the file: {e}"),
-                );
-                continue;
-            }
             Err(e) => {
-                sec.fail(format!("{what}: keepass-rs cannot open it: {e}"));
+                sec.fail(format!("{what}: cannot open it: {e}"));
                 continue;
             }
         };
-        let saved = match save(&prepare_for_save(&db), &key) {
+        let saved = match save(&db, &key) {
             Ok(s) => s,
             Err(e) => {
                 sec.fail(format!("{what}: save failed: {e}"));
                 continue;
             }
         };
+        let saved_path = saved_dir.join(name);
+        let _ = std::fs::write(&saved_path, &saved);
+        match open(&saved, &key) {
+            Ok(again) => same_tree(&mut sec, &db, &again, what),
+            Err(e) => sec.fail(format!("{what}: cannot reopen the saved file: {e}")),
+        }
         match (raw_xml(&bytes, &key), raw_xml(&saved, &key)) {
             (Ok(a), Ok(b)) => {
+                for marker in ["MikoshiUnknown", "MasterKeyChangeForceOnce", ">AAAA<"] {
+                    let n = a.matches(marker).count();
+                    if n > 0 {
+                        sec.check(
+                            b.matches(marker).count() == n,
+                            format!("{what}: {marker} ×{n} still in the saved file"),
+                        );
+                    }
+                }
                 match (canon::parse(&a, Source::Raw), canon::parse(&b, Source::Raw)) {
                     (Ok(ca), Ok(cb)) => {
                         let diffs = canon::diff(&ca, &cb);
@@ -1116,6 +1004,23 @@ fn run_foreign(ctx: &Ctx) -> Section {
             }
             (Err(e), _) | (_, Err(e)) => sec.fail(format!("{what}: cannot decrypt: {e}")),
         }
+        if let Some(kxc) = &ctx.kxc {
+            let after = kxc.export_xml(&saved_path, &key).is_ok();
+            match kxc_opens {
+                Some(true) => sec.check(
+                    after,
+                    format!("{what}: KeePassXC opens the original and the saved file"),
+                ),
+                _ => sec.note(format!(
+                    "{what}: KeePassXC refuses the original{}",
+                    if after {
+                        ", opens the saved file"
+                    } else {
+                        " and the saved file"
+                    }
+                )),
+            }
+        }
     }
     sec
 }
@@ -1124,24 +1029,18 @@ fn run_foreign(ctx: &Ctx) -> Section {
 
 fn run_damaged(ctx: &Ctx) -> Section {
     let mut sec = Section::new("Damaged files and wrong keys");
-    sec.note("| file | damage | reported as |".to_string());
-    sec.note("|---|---|---|".to_string());
+    sec.note("| file | damage | reported as |");
+    sec.note("|---|---|---|");
     for name in ["kxc/kdbx41-pw.kdbx", "kxc/kdbx31-pw.kdbx"] {
-        let Some(spec) = ctx
-            .manifest
-            .fixture
-            .iter()
-            .find(|f| f.file == name)
-            .cloned()
-        else {
-            continue;
-        };
+        let Some(spec) = ctx.spec(name) else { continue };
         let key = ctx.key(&spec);
         let Ok(bytes) = std::fs::read(ctx.fixtures.join(name)) else {
             continue;
         };
+        let kdbx3 = spec.format == "3.1";
         let header_len = header_length(&bytes).unwrap_or(200);
-        let mut cases: Vec<(&str, Vec<u8>, Key)> = Vec::new();
+        // expected: Some(true) wrong key, Some(false) damaged, None either
+        let mut cases: Vec<(&str, Vec<u8>, Key, Option<bool>)> = Vec::new();
         cases.push((
             "wrong password",
             bytes.clone(),
@@ -1149,6 +1048,7 @@ fn run_damaged(ctx: &Ctx) -> Section {
                 password: Some("not-the-password".into()),
                 keyfile: None,
             },
+            Some(true),
         ));
         cases.push((
             "no password, key file only",
@@ -1157,18 +1057,34 @@ fn run_damaged(ctx: &Ctx) -> Section {
                 password: None,
                 keyfile: Some(ctx.fixtures.join("keys/binary-32.key")),
             },
+            Some(true),
         ));
         let mut t = bytes.clone();
         t.truncate(bytes.len() / 2);
-        cases.push(("truncated to half", t, key.clone()));
+        cases.push(("truncated to half", t, key.clone(), Some(false)));
         let mut t = bytes.clone();
         t.truncate(header_len.saturating_sub(10));
-        cases.push(("truncated inside the header", t, key.clone()));
+        cases.push(("truncated inside the header", t, key.clone(), Some(false)));
+        let mut t = bytes.clone();
+        t.truncate(header_len + 20);
+        cases.push((
+            "truncated right after the header",
+            t,
+            key.clone(),
+            Some(false),
+        ));
         let mut t = bytes.clone();
         if let Some(b) = t.get_mut(header_len.saturating_sub(20)) {
             *b ^= 0x01;
         }
-        cases.push(("one bit flipped in the header", t, key.clone()));
+        // KDBX 3.1 has no checksum on the header outside the encrypted part:
+        // a flipped seed or IV is indistinguishable from a wrong key
+        cases.push((
+            "one bit flipped in the header",
+            t,
+            key.clone(),
+            if kdbx3 { None } else { Some(false) },
+        ));
         let mut t = bytes.clone();
         if let Some(b) = t.get_mut(header_len + 80) {
             *b ^= 0x01;
@@ -1177,62 +1093,47 @@ fn run_damaged(ctx: &Ctx) -> Section {
             "one bit flipped at the start of the payload",
             t,
             key.clone(),
+            Some(false),
         ));
         let mut t = bytes.clone();
         let n = t.len();
         if let Some(b) = t.get_mut(n - 40) {
             *b ^= 0x01;
         }
-        cases.push(("one bit flipped near the end", t, key.clone()));
-        for (what, data, k) in cases {
+        cases.push(("one bit flipped near the end", t, key.clone(), Some(false)));
+        for (what, data, k, expect_wrong_key) in cases {
             let result = match open(&data, &k) {
                 Ok(damaged_db) => {
                     // only acceptable if the damage did not touch the content
                     let same = open(&bytes, &key)
-                        .map(|orig| {
-                            canon::diff(
-                                &model::from_database(&orig),
-                                &model::from_database(&damaged_db),
-                            )
-                            .is_empty()
-                        })
+                        .map(|orig| orig.document() == damaged_db.document())
                         .unwrap_or(false);
-                    if same {
-                        sec.note(format!("| {name} | {what} | opened; content identical to the original (the flipped bit is in the end-of-stream marker, which is not verified) |"));
+                    sec.check(same, format!("| {name} | {what} | opened{} |", if same {
+                        "; content identical to the original (the bit is in padding the format does not check)"
                     } else {
-                        sec.fail(format!(
-                            "| {name} | {what} | OPENED WITH DIFFERENT CONTENT |"
-                        ));
-                    }
+                        " WITH DIFFERENT CONTENT"
+                    }));
                     continue;
                 }
-                Err(e) => e.to_string(),
+                Err(e) => e,
             };
-            if result.contains("PANIC") {
-                sec.fail(format!("| {name} | {what} | {result} |"));
-                continue;
-            }
-            let expected_wrong_key = what.starts_with("wrong") || what.starts_with("no password");
-            let says_wrong_key = result.starts_with("wrong key");
-            if spec.format == "3.1"
-                && (result.starts_with("AMBIGUOUS") || expected_wrong_key != says_wrong_key)
-            {
-                sec.mark_known("K5");
-                sec.note(format!("| {name} | {what} | {result} [K5] |"));
-            } else if expected_wrong_key != says_wrong_key {
-                sec.fail(format!("| {name} | {what} | {result} |"));
-            } else {
-                sec.note(format!("| {name} | {what} | {result} |"));
-            }
+            let is_wrong_key = matches!(result, OpenError::Failed(kdbx::Error::WrongKey));
+            let is_damaged = matches!(result, OpenError::Failed(kdbx::Error::Corrupt(_)));
+            let ok = match expect_wrong_key {
+                Some(true) => is_wrong_key,
+                Some(false) => is_damaged,
+                None => is_wrong_key || is_damaged,
+            };
+            sec.check(ok, format!("| {name} | {what} | {result} |"));
         }
     }
     let random: Vec<u8> = (0..4096u32)
         .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
         .collect();
-    for (what, data) in [
-        ("empty file", Vec::new()),
-        ("random bytes", random),
-        ("KeePass 1 (.kdb) signature", kdb_stub()),
+    for (what, data, expected) in [
+        ("empty file", Vec::new(), "not a KeePass file"),
+        ("random bytes", random, "not a KeePass file"),
+        ("KeePass 1 (.kdb) signature", kdb_stub(), "KeePass 1 file"),
     ] {
         let result = match open(
             &data,
@@ -1244,12 +1145,7 @@ fn run_damaged(ctx: &Ctx) -> Section {
             Ok(_) => "OPENED (!)".to_string(),
             Err(e) => e.to_string(),
         };
-        let line = format!("| - | {what} | {result} |");
-        if result.contains("PANIC") {
-            sec.fail(line)
-        } else {
-            sec.note(line)
-        }
+        sec.check(result == expected, format!("| - | {what} | {result} |"));
     }
     sec
 }
@@ -1289,14 +1185,8 @@ fn header_length(bytes: &[u8]) -> Option<usize> {
 // ---------------------------------------------------------------- editing
 
 fn run_edit(ctx: &Ctx) -> Section {
-    let mut sec = Section::new("Edit with keepass-rs, read back with KeePassXC");
-    let Some(spec) = ctx
-        .manifest
-        .fixture
-        .iter()
-        .find(|f| f.file == "kxc/kdbx41-pw.kdbx")
-        .cloned()
-    else {
+    let mut sec = Section::new("Edit with kdbx, read back with KeePassXC");
+    let Some(spec) = ctx.spec("kxc/kdbx41-pw.kdbx") else {
         sec.fail("base fixture missing");
         return sec;
     };
@@ -1311,14 +1201,16 @@ fn run_edit(ctx: &Ctx) -> Section {
     };
 
     let find = |db: &Database, title: &str| {
-        db.iter_all_entries()
-            .find(|e| e.get_title() == Some(title))
-            .map(|e| e.id())
+        db.entries()
+            .into_iter()
+            .find(|e| e.get("Title").as_deref() == Some(title))
+            .and_then(|e| e.uuid())
     };
     let find_group = |db: &Database, name: &str| {
-        db.iter_all_groups()
-            .find(|g| g.name == name)
-            .map(|g| g.id())
+        db.groups()
+            .into_iter()
+            .find(|g| g.name() == name)
+            .and_then(|g| g.uuid())
     };
     let (Some(full), Some(expired), Some(general)) = (
         find(&db, "Full Fields"),
@@ -1328,47 +1220,35 @@ fn run_edit(ctx: &Ctx) -> Section {
         sec.fail("fixture content not as expected");
         return sec;
     };
-    let recycle: Option<GroupId> = db.recycle_bin().map(|g| g.id());
+    let recycle = db.recycle_bin().and_then(|g| g.uuid());
+    let original = open(&bytes, &key).ok();
 
     // 1. edit an entry, keeping the old version in history (what Mikoshi will do)
-    let history_before = db
-        .entry(full)
-        .and_then(|e| e.history.as_ref().map(|h| h.get_entries().len()))
-        .unwrap_or(0);
+    let history_before = db.entry(full).map(|e| e.history().count()).unwrap_or(0);
     if let Some(mut e) = db.entry_mut(full) {
-        let snapshot = (*e).clone();
-        e.history
-            .get_or_insert_with(Default::default)
-            .add_entry(snapshot);
-        e.set_unprotected(fields::TITLE, "Full Fields (edited)");
-        e.set_protected(fields::PASSWORD, "new-password-✓");
-        e.set_protected("New Secret", "added by keepass-rs");
+        e.push_history();
+        e.set_field("Title", "Full Fields (edited)", false);
+        e.set_field("Password", "new-password-✓", true);
+        e.set_field("New Secret", "added by kdbx", true);
+        e.touch();
     }
     // 2. new entry with an attachment, in a new group
-    let new_group = db.group_mut(general).map(|mut g| {
-        let mut ng = g.add_group();
-        ng.name = "Added Group".into();
-        ng.id()
-    });
-    let new_entry = new_group.and_then(|gid| {
-        db.group_mut(gid).map(|mut g| {
-            let mut e = g.add_entry();
-            e.set_unprotected(fields::TITLE, "Added Entry");
-            e.set_unprotected(fields::USERNAME, "added-user");
-            e.set_protected(fields::PASSWORD, "added-password");
-            e.add_attachment(
-                "added.txt",
-                Value::unprotected(b"attachment added by keepass-rs".to_vec()),
-            );
-            e.id()
-        })
-    });
+    let new_group = db.add_group(general, "Added Group");
+    let new_entry = new_group.and_then(|g| db.add_entry(g));
+    if let Some(id) = new_entry {
+        if let Some(mut e) = db.entry_mut(id) {
+            e.set_field("Title", "Added Entry", false);
+            e.set_field("UserName", "added-user", false);
+            e.set_field("Password", "added-password", true);
+        }
+        db.add_attachment(id, "added.txt", b"attachment added by kdbx", false);
+    }
     // 3. move an entry into the recycle bin
-    if let (Some(bin), Some(mut e)) = (recycle, db.entry_mut(expired)) {
-        let _ = e.move_to(bin);
+    if let Some(bin) = recycle {
+        db.move_entry(expired, bin);
     }
 
-    let saved = match save(&prepare_for_save(&db), &key) {
+    let saved = match save(&db, &key) {
         Ok(s) => s,
         Err(e) => {
             sec.fail(format!("save failed: {e}"));
@@ -1378,10 +1258,27 @@ fn run_edit(ctx: &Ctx) -> Section {
     let path = out_dir().join("saved").join("edited.kdbx");
     let _ = std::fs::write(&path, &saved);
 
+    // the edits touch only their own nodes: without the edited, moved and
+    // added ones, both trees must be identical
+    if let (Some(orig), Ok(after)) = (&original, open(&saved, &key)) {
+        let mut touched = vec![full, expired];
+        touched.extend(new_group);
+        let a = model::without(orig.document(), &touched);
+        let b = model::without(after.document(), &touched);
+        let diffs = model::tree_diff(&a, &b, 20);
+        sec.check(
+            diffs.is_empty(),
+            "everything the edits did not touch is identical node by node",
+        );
+        for d in &diffs {
+            sec.fail(format!("  untouched node changed: {d}"));
+        }
+    }
+
     let Some(kxc) = &ctx.kxc else {
-        sec.note("keepassxc-cli not found; only checked that keepass-rs reopens it");
+        sec.note("keepassxc-cli not found; only checked that kdbx reopens it");
         if open(&saved, &key).is_err() {
-            sec.fail("keepass-rs cannot reopen its own edited file");
+            sec.fail("kdbx cannot reopen its own edited file");
         }
         return sec;
     };
@@ -1409,7 +1306,7 @@ fn run_edit(ctx: &Ctx) -> Section {
             sec.fail(format!("NOT OK: {what}"))
         }
     };
-    let full_key = format!("Entry[{}]", base64_uuid(full.uuid()));
+    let full_key = format!("Entry[{}]", full.to_base64());
     expect(
         "edited title",
         find_record(&format!("{full_key}/String[Title]/Value")).map(|(_, v)| v)
@@ -1439,7 +1336,7 @@ fn run_edit(ctx: &Ctx) -> Section {
         history_after == history_before + 1,
     );
     if let Some(id) = new_entry {
-        let k = format!("Entry[{}]", base64_uuid(id.uuid()));
+        let k = format!("Entry[{}]", id.to_base64());
         expect(
             "new entry inside the new group",
             export
@@ -1456,17 +1353,13 @@ fn run_edit(ctx: &Ctx) -> Section {
         ) {
             Ok(d) => expect(
                 "attachment of the new entry",
-                d == b"attachment added by keepass-rs",
+                d == b"attachment added by kdbx",
             ),
             Err(e) => expect(&format!("attachment of the new entry ({e})"), false),
         }
     }
     if let Some(bin) = recycle {
-        let exp = format!(
-            "Group[{}]/Entry[{}]",
-            base64_uuid(bin.uuid()),
-            base64_uuid(expired.uuid())
-        );
+        let exp = format!("Group[{}]/Entry[{}]", bin.to_base64(), expired.to_base64());
         expect(
             "entry moved to the recycle bin",
             export.records.keys().any(|k| k.ends_with(&exp)),
@@ -1478,10 +1371,118 @@ fn run_edit(ctx: &Ctx) -> Section {
             .map(|(_, v)| v.clone());
         expect(
             "PreviousParentGroup set on the moved entry",
-            prev == Some(base64_uuid(general.uuid())),
+            prev == Some(general.to_base64()),
         );
     }
     sec
+}
+
+// ---------------------------------------------------------------- fuzzing
+
+fn fuzz_corpus(ctx: &Ctx) -> Result<kdbx::fuzz::Corpus, String> {
+    let mut dbs = Vec::new();
+    let mut xml3 = Vec::new();
+    for spec in &ctx.manifest.fixture {
+        let Ok(bytes) = std::fs::read(ctx.fixtures.join(&spec.file)) else {
+            continue;
+        };
+        let key = ctx.key(spec);
+        if spec.format == "3.1"
+            && xml3.len() < 2
+            && let Ok(x) = raw_xml(&bytes, &key)
+        {
+            xml3.push(x.into_bytes());
+        }
+        if dbs.len() < 3
+            && let Ok(db) = open(&bytes, &key)
+        {
+            dbs.push(db);
+        }
+    }
+    let foreign = ctx.fixtures.join("foreign");
+    let pw = Key {
+        password: Some(ctx.manifest.password.clone()),
+        keyfile: None,
+    };
+    if let Ok(dir) = std::fs::read_dir(&foreign) {
+        for f in dir.flatten() {
+            if let Ok(bytes) = std::fs::read(f.path())
+                && let Ok(db) = open(&bytes, &pw)
+            {
+                dbs.push(db);
+            }
+        }
+    }
+    if dbs.is_empty() {
+        return Err("no fixture opens; run tests/fixtures/generate.py".into());
+    }
+    let keyfiles = [
+        "keys/xml-v1.key",
+        "keys/xml-v2.keyx",
+        "keys/hex-64.key",
+        "keys/binary-32.key",
+    ]
+    .iter()
+    .filter_map(|k| std::fs::read(ctx.fixtures.join(k)).ok())
+    .collect();
+    let refs: Vec<&Database> = dbs.iter().collect();
+    Ok(kdbx::fuzz::Corpus::from_databases(
+        &refs,
+        kdbx::Key::new().with_password("fuzz-corpus"),
+        xml3,
+        keyfiles,
+    ))
+}
+
+fn run_fuzz_section(ctx: &Ctx, budget: Duration, seed: u64) -> Section {
+    let mut sec = Section::new("Fuzzing: mutated files and payloads");
+    let corpus = match fuzz_corpus(ctx) {
+        Ok(c) => c,
+        Err(e) => {
+            sec.fail(e);
+            return sec;
+        }
+    };
+    let out = kdbx::fuzz::run(&corpus, seed, kdbx::fuzz::Budget::Time(budget));
+    sec.note(format!(
+        "seed {seed:#x}: {} cases in {} s, {} accepted and round-tripped",
+        out.cases,
+        budget.as_secs(),
+        out.accepted
+    ));
+    for f in &out.failures {
+        sec.fail(f.clone());
+    }
+    if out.failures.is_empty() {
+        sec.note("no panics, no round-trip differences");
+    }
+    sec
+}
+
+fn run_fuzz(args: &[String]) -> ExitCode {
+    let secs = args.first().and_then(|s| s.parse().ok()).unwrap_or(60);
+    let seed = args.get(1).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1)
+    });
+    let ctx = match load_ctx() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let sec = run_fuzz_section(&ctx, Duration::from_secs(secs), seed);
+    for l in &sec.lines {
+        println!("{l}");
+    }
+    if sec.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 // ---------------------------------------------------------------- report
@@ -1494,7 +1495,7 @@ fn render_report(
 ) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "# kdbx-compat report\n");
-    let _ = writeln!(s, "- keepass-rs: 0.17 (features save_kdbx4, totp)");
+    let _ = writeln!(s, "- reader / writer: kdbx crate (crates/kdbx)");
     let _ = writeln!(
         s,
         "- reference: {}",
@@ -1532,13 +1533,13 @@ fn render_report(
         let _ = writeln!(s, "| {} | | {} |", sec.title, sec.status());
     }
 
-    let _ = writeln!(s, "\n## Known issues\n");
+    let _ = writeln!(s, "\n## M0 issues (keepass-rs)\n");
     let _ = writeln!(
         s,
-        "Found while evaluating keepass-rs; see docs/m0-report.md. Lines tagged with these ids are expected until fixed.\n"
+        "Found in keepass-rs during M0 (docs/m0-report.md). The kdbx crate must not have them; each one is checked here:\n"
     );
-    for (id, text) in KNOWN {
-        let _ = writeln!(s, "- **{id}** {text}");
+    for (id, text, check) in M0_ISSUES {
+        let _ = writeln!(s, "- **{id}** {text} — checked by: {check}");
     }
 
     for r in reports.iter().filter(|r| !r.sections.is_empty()) {
@@ -1626,12 +1627,13 @@ fn run_check(args: &[String]) -> ExitCode {
         }
     };
     println!(
-        "open:   ok in {} — {} entries, {} groups",
+        "open:   ok in {} — {} entries, {} groups, {} attachments",
         ms(t.elapsed()),
-        db.iter_all_entries().count(),
-        db.iter_all_groups().count()
+        db.entries().len(),
+        db.groups().len(),
+        db.binaries().len()
     );
-    let saved = match save(&prepare_for_save(&db), &key) {
+    let saved = match save(&db, &key) {
         Ok(s) => s,
         Err(e) => {
             println!("save:   FAILED — {e}");
@@ -1648,9 +1650,22 @@ fn run_check(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let before = model::from_database(&db);
-    let model_diffs = canon::diff(&before, &model::from_database(&reopened));
-    let attachments_same = model::attachments(&db) == model::attachments(&reopened);
+    let tree_diffs = model::tree_diff(db.document(), reopened.document(), 50);
+    let attachments_same = db.binaries() == reopened.binaries();
+    println!(
+        "\ntree before vs after (node by node): {}",
+        if tree_diffs.is_empty() && attachments_same {
+            "identical".to_string()
+        } else {
+            format!("{} differences", tree_diffs.len())
+        }
+    );
+    for d in &tree_diffs {
+        println!("  {d}");
+    }
+    if !attachments_same {
+        println!("  attachment pool differs");
+    }
     let (raw_a, raw_b) = match (raw_xml(&bytes, &key), raw_xml(&saved, &key)) {
         (Ok(a), Ok(b)) => (a, b),
         (Err(e), _) | (_, Err(e)) => {
@@ -1671,30 +1686,13 @@ fn run_check(args: &[String]) -> ExitCode {
     let raw_diffs = canon::diff(&ca, &cb);
     let sorted = sort_diffs(&raw_diffs, &ca);
     println!(
-        "\nkeepass-rs model before vs after: {}",
-        if model_diffs.is_empty() && attachments_same {
-            "identical".to_string()
-        } else {
-            format!("{} differences", model_diffs.len())
-        }
-    );
-    for d in &model_diffs {
-        println!("  {}", describe(d, &[&before.labels], false));
-    }
-    println!(
-        "stored XML before vs after: {} records compared — {} unexpected, {} known issues, {} harmless",
+        "stored XML before vs after: {} records compared — {} unexpected, {} harmless",
         ca.records.len(),
         sorted.real.len(),
-        sorted.known.len(),
         sorted.benign.len()
     );
     let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
-    let tagged = sorted
-        .real
-        .iter()
-        .map(|d| (*d, "NEW"))
-        .chain(sorted.known.iter().map(|(d, id)| (*d, *id)));
-    for (d, tag) in tagged {
+    for d in &sorted.real {
         let generic: String = canon::segments(&d.path)
             .into_iter()
             .map(|seg| {
@@ -1711,18 +1709,12 @@ fn run_check(args: &[String]) -> ExitCode {
             Change::Added(_) => "ADDED",
             Change::Changed(_, _) => "CHANGED",
         };
-        *by_kind
-            .entry(format!("[{tag}] {kind:8} {generic}"))
-            .or_default() += 1;
+        *by_kind.entry(format!("{kind:8} {generic}")).or_default() += 1;
     }
     for (k, n) in &by_kind {
         println!("  {n:5} × {k}");
     }
-    let ids: Vec<&str> = sorted.known.iter().map(|(_, id)| *id).collect();
-    for (id, text) in KNOWN.iter().filter(|(id, _)| ids.contains(id)) {
-        println!("  {id}: {text}");
-    }
-    if sorted.real.is_empty() && model_diffs.is_empty() && attachments_same {
+    if sorted.real.is_empty() && tree_diffs.is_empty() && attachments_same {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -1741,45 +1733,38 @@ fn run_timing() -> ExitCode {
         eprintln!("run tests/fixtures/generate.py first");
         return ExitCode::FAILURE;
     };
-    let Ok(base) = open(&bytes, &key) else {
+    let Ok(mut base) = open(&bytes, &key) else {
         eprintln!("cannot open base fixture");
         return ExitCode::FAILURE;
     };
-    let version = match DatabaseConfig::default().kdf_config {
-        KdfConfig::Argon2 { version, .. } => version,
-        _ => unreachable_version(),
+    let argon = |id, memory, iterations, parallelism| Kdf::Argon2 {
+        id,
+        memory,
+        iterations,
+        parallelism,
+        version: 0x13,
     };
-    let cases: Vec<(&str, KdfConfig)> = vec![
+    // keepass-rs 0.17, measured on this machine in M0 (release build)
+    let cases: Vec<(&str, Kdf, &str)> = vec![
         (
             "AES-KDF, 10,000,000 rounds",
-            KdfConfig::Aes { rounds: 10_000_000 },
+            Kdf::Aes { rounds: 10_000_000 },
+            "252 ms",
         ),
         (
             "Argon2d, 64 MiB, 2 iterations, 2 lanes (KeePass 2 default)",
-            KdfConfig::Argon2 {
-                iterations: 2,
-                memory: 64 << 20,
-                parallelism: 2,
-                version,
-            },
+            argon(false, 64 << 20, 2, 2),
+            "96 ms",
         ),
         (
             "Argon2id, 64 MiB, 10 iterations, 4 lanes",
-            KdfConfig::Argon2id {
-                iterations: 10,
-                memory: 64 << 20,
-                parallelism: 4,
-                version,
-            },
+            argon(true, 64 << 20, 10, 4),
+            "216 ms",
         ),
         (
             "Argon2id, 1 GiB, 2 iterations, 8 lanes",
-            KdfConfig::Argon2id {
-                iterations: 2,
-                memory: 1 << 30,
-                parallelism: 8,
-                version,
-            },
+            argon(true, 1 << 30, 2, 8),
+            "1083 ms",
         ),
     ];
     let kxc = Kxc::find();
@@ -1787,10 +1772,11 @@ fn run_timing() -> ExitCode {
     let _ = std::fs::create_dir_all(&dir);
     // keepassxc-cli's own start-up cost, measured on a file with a trivial KDF
     let kxc_baseline = kxc.as_ref().and_then(|k| {
-        let mut db = prepare_for_save(&base);
-        db.config.kdf_config = KdfConfig::Aes { rounds: 1 };
+        let mut s = base.settings();
+        s.kdf = Kdf::Aes { rounds: 1 };
+        base.set_settings(&s);
         let path = dir.join("baseline.kdbx");
-        std::fs::write(&path, save(&db, &key).ok()?).ok()?;
+        std::fs::write(&path, save(&base, &key).ok()?).ok()?;
         (0..3)
             .filter_map(|_| {
                 let t = Instant::now();
@@ -1806,11 +1792,15 @@ fn run_timing() -> ExitCode {
             "release"
         }
     );
-    println!("{:60} {:>12} {:>16}", "KDF", "keepass-rs", "keepassxc-cli*");
-    for (i, (name, kdf)) in cases.into_iter().enumerate() {
-        let mut db = prepare_for_save(&base);
-        db.config.kdf_config = kdf;
-        let saved = match save(&db, &key) {
+    println!(
+        "{:60} {:>10} {:>16} {:>16}",
+        "KDF", "kdbx", "keepass-rs (M0)", "keepassxc-cli*"
+    );
+    for (i, (name, kdf, m0)) in cases.into_iter().enumerate() {
+        let mut s = base.settings();
+        s.kdf = kdf;
+        base.set_settings(&s);
+        let saved = match save(&base, &key) {
             Ok(s) => s,
             Err(e) => {
                 println!("{name}: save failed: {e}");
@@ -1844,7 +1834,12 @@ fn run_timing() -> ExitCode {
             }
             _ => "-".into(),
         };
-        println!("{name:60} {:>9} ms {:>16}", best.as_millis(), theirs);
+        println!(
+            "{name:60} {:>7} ms {:>16} {:>16}",
+            best.as_millis(),
+            m0,
+            theirs
+        );
     }
     if let Some(b) = kxc_baseline {
         println!(
@@ -1861,9 +1856,10 @@ fn main() -> ExitCode {
         None | Some("fixtures") => run_fixtures(),
         Some("check") => run_check(&args[1..]),
         Some("timing") => run_timing(),
+        Some("fuzz") => run_fuzz(&args[1..]),
         _ => {
             eprintln!(
-                "usage: kdbx-compat [fixtures | check <file> [--keyfile <path>] [--no-password] | timing]"
+                "usage: kdbx-compat [fixtures | check <file> [--keyfile <path>] [--no-password] | timing | fuzz [seconds] [seed]]"
             );
             ExitCode::FAILURE
         }

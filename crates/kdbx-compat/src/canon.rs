@@ -298,10 +298,6 @@ pub fn normalize_time(text: &str) -> String {
     format!("unparsed:{text}")
 }
 
-pub fn format_time(t: &NaiveDateTime) -> String {
-    t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-}
-
 pub fn short_hash(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(data);

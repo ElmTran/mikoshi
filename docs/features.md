@@ -24,6 +24,8 @@ Mikoshi 是一个 Windows 桌面密码管理器，直接读写 KeePass 的 `.kdb
 
 ### keepass-rs 的已知限制（开发前必须先验证）
 
+> 历史记录：M0 据此做了验证（见 m0-report.md），M6 起已不再使用 keepass-rs。
+
 - 能读 KDB、KDBX 3.1 和 KDBX 4，但**写入标注为"实验性"，而且只能写 KDBX 4**
 - 往返保存会不会丢数据**还没验证**。需要确认的有：无法识别的 XML 元素、CustomData（库、分组、条目三级）、历史记录、附件、标签、自定义图标、KDBX 4.1 新增的字段（如 `PreviousParentGroup`、`QualityCheck`）
 - README 提到要按 CPU 设置编译参数才能有好的性能（见该仓库的 `.cargo/config.toml`）。debug 构建下 Argon2 会非常慢，需要给依赖单独开优化，例如 `[profile.dev.package."*"] opt-level = 3`

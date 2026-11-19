@@ -1,10 +1,11 @@
 //! An unlocked KDBX database and the views of it the frontend may see.
 //!
 //! Opening never writes anything. The decrypted database lives in [`Vault`];
-//! dropping it (on lock) releases it all. keepass-rs keeps protected values in
-//! `SecretBox`, which wipes them on drop; unprotected fields (user names,
-//! URLs, notes) are ordinary strings inside the library (see m0-report.md).
+//! dropping it (on lock) releases it all. The `kdbx` crate keeps protected
+//! values and attachments in memory that is wiped on drop; unprotected fields
+//! (user names, URLs, notes) are ordinary strings.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind;
@@ -13,14 +14,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use chrono::NaiveDateTime;
-use keepass::config::DatabaseVersion;
-use keepass::db::{EntryId, EntryRef, GroupId, GroupRef, Icon, Times};
-use keepass::error::{
-    DatabaseFormatError, DatabaseOpenError, DatabaseVersionParseError as V, Kdbx3OpenError,
-    Kdbx3OuterHeaderError as H3, Kdbx4OpenError, Kdbx4OuterHeaderError as H4,
-};
-use keepass::{Database, DatabaseKey};
+use kdbx::{Database, Entry, Group, Key, Timestamp, Uuid};
 
 use crate::Secret;
 use crate::autotype::{self, DEFAULT_SEQUENCE};
@@ -39,19 +33,31 @@ pub enum OpenError {
     NoKey,
     /// the password or the key file is wrong
     WrongKey,
-    /// KDBX 3.1 cannot tell a wrong key from a damaged file (M0 issue K5)
-    WrongKeyOrCorrupt,
     /// the file is damaged or truncated
     Corrupt,
     /// a KeePass file, but a version or algorithm that is not supported
     Unsupported,
-    /// a KeePass 1 `.kdb` file: keepass-rs reads them, Mikoshi does not
+    /// a KeePass 1 `.kdb` file
     KeePass1,
     /// not a KeePass file at all
     NotKeePass,
     FileNotFound,
     FileUnreadable,
     KeyFileUnreadable,
+}
+
+impl From<kdbx::Error> for OpenError {
+    fn from(e: kdbx::Error) -> Self {
+        match e {
+            kdbx::Error::NotKeePass => OpenError::NotKeePass,
+            kdbx::Error::KeePass1 => OpenError::KeePass1,
+            kdbx::Error::Unsupported(_) | kdbx::Error::OutOfMemory => OpenError::Unsupported,
+            kdbx::Error::WrongKey => OpenError::WrongKey,
+            kdbx::Error::Corrupt(_) => OpenError::Corrupt,
+            kdbx::Error::KeyFile(_) => OpenError::KeyFileUnreadable,
+            kdbx::Error::NoKey => OpenError::NoKey,
+        }
+    }
 }
 
 /// What unlocks a database. An empty password counts as "no password".
@@ -63,17 +69,13 @@ pub struct Credentials<'a> {
 /// Standard KeePass icon numbers used as defaults.
 const ICON_KEY: u32 = 0;
 const ICON_FOLDER: u32 = 48;
-const ICON_COUNT: usize = 69;
+const ICON_COUNT: u32 = 69;
 
 /// Fields that hold TOTP settings or secrets. They are never listed as
 /// custom fields or revealed: the code is computed on the Rust side
 /// (features.md §6).
 fn is_otp_field(key: &str) -> bool {
     totp::is_totp_field(key)
-}
-
-fn has_totp(e: &EntryRef<'_>) -> bool {
-    totp::has_totp(|k| e.get(k))
 }
 
 fn is_standard_field(key: &str) -> bool {
@@ -83,34 +85,30 @@ fn is_standard_field(key: &str) -> bool {
     )
 }
 
-fn iso(t: &NaiveDateTime) -> String {
-    format!("{}Z", t.format("%Y-%m-%dT%H:%M:%S"))
+/// An entry's fields by name, for the helpers that look values up by key.
+struct Fields<'a>(HashMap<Cow<'a, str>, Cow<'a, str>>);
+
+impl<'a> Fields<'a> {
+    fn of(e: &Entry<'a>) -> Self {
+        Fields(e.fields().map(|f| (f.key(), f.value())).collect())
+    }
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(|v| v.as_ref())
+    }
+    fn text(&self, key: &str) -> String {
+        self.get(key).unwrap_or_default().to_string()
+    }
 }
 
-fn expires(times: &Times) -> Option<&NaiveDateTime> {
-    (times.expires == Some(true)).then_some(&times.expiry)
-}
-
-fn expired(times: &Times) -> bool {
-    expires(times).is_some_and(|t| *t <= Times::now())
+fn iso(t: Timestamp) -> String {
+    t.to_iso()
 }
 
 /// Standard icon number and custom icon id. `default` applies when the file
 /// gives no icon or one outside the standard range.
-fn icon_of(icon: Option<&Icon>, default: u32) -> (u32, Option<String>) {
-    match icon {
-        Some(Icon::BuiltIn(i)) if *i < ICON_COUNT => (*i as u32, None),
-        Some(Icon::Custom(id)) => (default, Some(id.uuid().to_string())),
-        _ => (default, None),
-    }
-}
-
-fn clean_tags(tags: &[String]) -> Vec<String> {
-    tags.iter()
-        .map(|t| t.trim())
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
-        .collect()
+fn icon_of(icon: Option<u32>, custom: Option<Uuid>, default: u32) -> (u32, Option<String>) {
+    let standard = icon.filter(|i| *i < ICON_COUNT).unwrap_or(default);
+    (standard, custom.map(|u| u.to_string()))
 }
 
 fn image_mime(data: &[u8]) -> &'static str {
@@ -137,39 +135,8 @@ pub fn file_stem(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-// one match per format reads better than a flattened one here
-#[allow(clippy::collapsible_match)]
-fn classify(e: &DatabaseOpenError, kdbx3: bool) -> OpenError {
-    match e {
-        DatabaseOpenError::Key(_) => OpenError::WrongKey,
-        DatabaseOpenError::VersionParse(V::InvalidKDBXIdentifier)
-        | DatabaseOpenError::VersionParse(V::UnexpectedEof) => OpenError::NotKeePass,
-        DatabaseOpenError::VersionParse(_) | DatabaseOpenError::UnsupportedVersion => {
-            OpenError::Unsupported
-        }
-        DatabaseOpenError::UnexpectedEof => OpenError::Corrupt,
-        // KDBX 3.1 has no header HMAC: with a wrong key, decryption usually
-        // fails on the padding first, the same error a damaged file gives.
-        // KDBX 4 checks the key before decrypting, so there it means damage.
-        DatabaseOpenError::Cryptography(_) if kdbx3 => OpenError::WrongKeyOrCorrupt,
-        DatabaseOpenError::Format(DatabaseFormatError::Kdbx4(k)) => match k {
-            Kdbx4OpenError::OuterHeader(H4::OuterCipherConfig(_))
-            | Kdbx4OpenError::OuterHeader(H4::KdfConfig(_))
-            | Kdbx4OpenError::OuterHeader(H4::CompressionConfig(_)) => OpenError::Unsupported,
-            _ => OpenError::Corrupt,
-        },
-        DatabaseOpenError::Format(DatabaseFormatError::Kdbx3(k)) => match k {
-            Kdbx3OpenError::OuterHeader(H3::OuterCipher(_))
-            | Kdbx3OpenError::OuterHeader(H3::InnerCipher(_)) => OpenError::Unsupported,
-            _ => OpenError::Corrupt,
-        },
-        DatabaseOpenError::Io(_) => OpenError::FileUnreadable,
-        _ => OpenError::Corrupt,
-    }
-}
-
 struct GroupNode {
-    id: GroupId,
+    id: Uuid,
     key: String,
     parent: Option<usize>,
     depth: u32,
@@ -200,8 +167,8 @@ pub struct Vault {
     /// tree order: depth first, the recycle bin last among its siblings
     groups: Vec<GroupNode>,
     group_index: HashMap<String, usize>,
-    /// entry id → (keepass id, index of its group in `groups`)
-    entries: HashMap<String, (EntryId, usize)>,
+    /// entry id → (uuid, index of its group in `groups`)
+    entries: HashMap<String, (Uuid, usize)>,
 }
 
 impl std::fmt::Debug for Vault {
@@ -218,37 +185,28 @@ impl Vault {
             ErrorKind::NotFound => OpenError::FileNotFound,
             _ => OpenError::FileUnreadable,
         })?;
-        let version = match Database::get_version(&mut data.as_slice()) {
-            Ok(v) => v,
-            Err(DatabaseOpenError::Io(_)) => return Err(OpenError::NotKeePass),
-            Err(e) => return Err(classify(&e, false)),
-        };
-        let kdbx3 = match version {
-            DatabaseVersion::KDB(_) => return Err(OpenError::KeePass1),
-            DatabaseVersion::KDB2(_) => return Err(OpenError::Unsupported),
-            DatabaseVersion::KDB3(_) => true,
-            DatabaseVersion::KDB4(_) => false,
-        };
+        // signature first: a file that is not a database says so even
+        // when the key is missing
+        kdbx::version(&data)?;
 
-        let mut key = DatabaseKey::new();
+        let mut key = Key::new();
         if let Some(p) = creds.password.filter(|p| !p.is_empty()) {
             key = key.with_password(p.expose());
         }
         if let Some(path) = creds.key_file {
-            let mut file = fs::File::open(path).map_err(|_| OpenError::KeyFileUnreadable)?;
-            key = key
-                .with_keyfile(&mut file)
-                .map_err(|_| OpenError::KeyFileUnreadable)?;
+            let contents =
+                zeroize::Zeroizing::new(fs::read(path).map_err(|_| OpenError::KeyFileUnreadable)?);
+            key = key.with_keyfile(&contents)?;
         }
         if key.is_empty() {
             return Err(OpenError::NoKey);
         }
 
-        // keepass-rs panics on some malformed files (M0 issue K9). A damaged
-        // file must not take the whole program down.
-        let db = match catch_unwind(AssertUnwindSafe(|| Database::parse(&data, key))) {
-            Ok(Ok(db)) => db,
-            Ok(Err(e)) => return Err(classify(&e, kdbx3)),
+        // The kdbx crate returns errors for malformed input (fuzzed in M6);
+        // this is a last line of defence so a damaged file can never take
+        // the whole program down.
+        let db = match catch_unwind(AssertUnwindSafe(|| Database::open(&data, &key))) {
+            Ok(r) => r?,
             Err(_) => return Err(OpenError::Corrupt),
         };
         Ok(Vault::index(db, path.to_path_buf()))
@@ -256,47 +214,40 @@ impl Vault {
 
     fn index(db: Database, path: PathBuf) -> Vault {
         struct Walk {
-            bin: Option<GroupId>,
+            bin: Option<Uuid>,
             groups: Vec<GroupNode>,
-            entries: HashMap<String, (EntryId, usize)>,
+            entries: HashMap<String, (Uuid, usize)>,
         }
         /// What a group passes on to its children.
-        #[derive(Clone, Copy)]
-        struct Inherited<'a> {
+        #[derive(Clone)]
+        struct Inherited {
             in_bin: bool,
             searchable: bool,
             autotype: bool,
-            sequence: Option<&'a str>,
+            sequence: Option<String>,
         }
-        fn walk<'a>(
+        fn walk(
             w: &mut Walk,
-            g: &'a GroupRef<'a>,
+            g: &Group<'_>,
             parent: Option<usize>,
             depth: u32,
-            from_parent: Inherited<'a>,
+            from_parent: &Inherited,
         ) {
-            let is_bin = w.bin == Some(g.id());
+            let Some(id) = g.uuid() else { return };
+            let is_bin = w.bin == Some(id);
             let here = Inherited {
                 in_bin: from_parent.in_bin || is_bin,
-                searchable: g.enable_searching.unwrap_or(from_parent.searchable),
-                autotype: g.enable_autotype.unwrap_or(from_parent.autotype),
+                searchable: g.enable_searching().unwrap_or(from_parent.searchable),
+                autotype: g.enable_autotype().unwrap_or(from_parent.autotype),
                 sequence: g
-                    .default_autotype_sequence
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .or(from_parent.sequence),
+                    .default_autotype_sequence()
+                    .map(|s| s.trim().to_string())
+                    .or_else(|| from_parent.sequence.clone()),
             };
-            let Inherited {
-                in_bin,
-                searchable,
-                autotype,
-                sequence,
-            } = here;
             let index = w.groups.len();
             w.groups.push(GroupNode {
-                id: g.id(),
-                key: g.id().uuid().to_string(),
+                id,
+                key: id.to_string(),
                 parent,
                 depth,
                 kind: if parent.is_none() {
@@ -306,35 +257,38 @@ impl Vault {
                 } else {
                     GroupKind::Normal
                 },
-                in_bin,
-                searchable,
-                autotype,
-                sequence: sequence.map(str::to_string),
+                in_bin: here.in_bin,
+                searchable: here.searchable,
+                autotype: here.autotype,
+                sequence: here.sequence.clone(),
             });
             for e in g.entries() {
-                w.entries.insert(e.id().uuid().to_string(), (e.id(), index));
+                if let Some(eid) = e.uuid() {
+                    w.entries.insert(eid.to_string(), (eid, index));
+                }
             }
-            let mut children: Vec<GroupRef<'_>> = g.groups().collect();
+            let mut children: Vec<Group<'_>> = g.groups().collect();
             // stable: keeps the file's order, only moves the bin to the end
-            children.sort_by_key(|c| w.bin == Some(c.id()));
+            children.sort_by_key(|c| w.bin.is_some() && c.uuid() == w.bin);
             for c in &children {
-                walk(w, c, Some(index), depth + 1, here);
+                walk(w, c, Some(index), depth + 1, &here);
             }
         }
 
         let mut w = Walk {
-            bin: db.recycle_bin().map(|g| g.id()),
+            bin: db.recycle_bin().and_then(|g| g.uuid()),
             groups: Vec::new(),
             entries: HashMap::new(),
         };
-        let root = db.root();
         let top = Inherited {
             in_bin: false,
             searchable: true,
             autotype: true,
             sequence: None,
         };
-        walk(&mut w, &root, None, 0, top);
+        if let Some(root) = db.root_group() {
+            walk(&mut w, &root, None, 0, &top);
+        }
         let group_index = w
             .groups
             .iter()
@@ -356,23 +310,22 @@ impl Vault {
 
     /// The database's own name, or the file name when it has none.
     pub fn name(&self) -> String {
-        self.db
-            .meta
-            .database_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| file_stem(&self.path))
+        let name = self.db.meta().database_name();
+        let name = name.trim();
+        if name.is_empty() {
+            file_stem(&self.path)
+        } else {
+            name.to_string()
+        }
     }
 
-    fn group_ref(&self, node: &GroupNode) -> Option<GroupRef<'_>> {
+    fn group_ref(&self, node: &GroupNode) -> Option<Group<'_>> {
         self.db.group(node.id)
     }
 
     /// The root shows every entry outside the recycle bin; any other group
     /// shows its own entries.
-    fn entries_in(&self, index: usize) -> Vec<(EntryRef<'_>, usize)> {
+    fn entries_in(&self, index: usize) -> Vec<(Entry<'_>, usize)> {
         let node = &self.groups[index];
         let wanted = |i: usize| {
             if node.kind == GroupKind::Root {
@@ -387,11 +340,7 @@ impl Vault {
                 continue;
             }
             if let Some(g) = self.group_ref(n) {
-                let ids: Vec<EntryId> = g.entry_ids().collect();
-                out.extend(
-                    ids.into_iter()
-                        .filter_map(|id| Some((self.db.entry(id)?, i))),
-                );
+                out.extend(g.entries().map(|e| (e, i)));
             }
         }
         out
@@ -403,36 +352,36 @@ impl Vault {
             .enumerate()
             .filter_map(|(i, node)| {
                 let g = self.group_ref(node)?;
-                let (icon, custom_icon) = icon_of(g.icon(), ICON_FOLDER);
+                let (icon, custom_icon) = icon_of(g.icon_id(), g.custom_icon(), ICON_FOLDER);
                 Some(GroupView {
                     id: node.key.clone(),
-                    name: g.name.clone(),
+                    name: g.name().into_owned(),
                     parent_id: node.parent.map(|p| self.groups[p].key.clone()),
                     depth: node.depth,
                     kind: node.kind,
                     entry_count: self.entries_in(i).len() as u32,
                     icon,
                     custom_icon,
-                    expanded: g.is_expanded,
+                    expanded: g.is_expanded(),
                     has_children: g.groups().next().is_some(),
                 })
             })
             .collect()
     }
 
-    fn summary(&self, e: &EntryRef<'_>, group: usize) -> EntrySummary {
-        let text = |k: &str| e.get(k).unwrap_or_default().to_string();
-        let (icon, custom_icon) = icon_of(e.icon(), ICON_KEY);
+    fn summary(&self, e: &Entry<'_>, f: &Fields<'_>, group: usize) -> EntrySummary {
+        let (icon, custom_icon) = icon_of(e.icon_id(), e.custom_icon(), ICON_KEY);
+        let times = e.times();
         EntrySummary {
-            id: e.id().uuid().to_string(),
+            id: e.uuid().map(|u| u.to_string()).unwrap_or_default(),
             group_id: self.groups[group].key.clone(),
-            title: text(fields::TITLE),
-            username: text(fields::USERNAME),
-            url: text(fields::URL),
-            modified: e.times.last_modification.as_ref().map(iso),
-            expired: expired(&e.times),
-            has_totp: has_totp(e),
-            tags: clean_tags(&e.tags),
+            title: f.text(fields::TITLE),
+            username: f.text(fields::USERNAME),
+            url: f.text(fields::URL),
+            modified: times.last_modification.map(iso),
+            expired: times.expired(),
+            has_totp: totp::has_totp(|k| f.get(k)),
+            tags: e.tags(),
             icon,
             custom_icon,
         }
@@ -444,7 +393,7 @@ impl Vault {
         Some(
             self.entries_in(index)
                 .iter()
-                .map(|(e, g)| self.summary(e, *g))
+                .map(|(e, g)| self.summary(e, &Fields::of(e), *g))
                 .collect(),
         )
     }
@@ -463,15 +412,17 @@ impl Vault {
                 continue;
             };
             for e in g.entries() {
+                let f = Fields::of(&e);
+                let tags = e.tags();
                 let h = Haystack {
-                    title: e.get(fields::TITLE).unwrap_or_default(),
-                    username: e.get(fields::USERNAME).unwrap_or_default(),
-                    url: e.get(fields::URL).unwrap_or_default(),
-                    notes: e.get(fields::NOTES).unwrap_or_default(),
-                    tags: &e.tags,
+                    title: f.get(fields::TITLE).unwrap_or_default(),
+                    username: f.get(fields::USERNAME).unwrap_or_default(),
+                    url: f.get(fields::URL).unwrap_or_default(),
+                    notes: f.get(fields::NOTES).unwrap_or_default(),
+                    tags: &tags,
                 };
                 if let Some(r) = query.rank(&h) {
-                    hits.push((r, self.summary(&e, i)));
+                    hits.push((r, self.summary(&e, &f, i)));
                 }
             }
         }
@@ -479,62 +430,62 @@ impl Vault {
         hits.into_iter().map(|(_, s)| s).collect()
     }
 
-    fn entry_ref(&self, id: &str) -> Option<(EntryRef<'_>, usize)> {
-        let (eid, group) = *self.entries.get(id)?;
-        Some((self.db.entry(eid)?, group))
+    fn entry_ref(&self, id: &str) -> Option<(Entry<'_>, usize)> {
+        let (uuid, group) = *self.entries.get(id)?;
+        Some((self.db.entry(uuid)?, group))
     }
 
     pub fn entry(&self, id: &str) -> Option<EntryDetail> {
         let (e, group) = self.entry_ref(id)?;
-        let text = |k: &str| e.get(k).unwrap_or_default().to_string();
+        let f = Fields::of(&e);
 
         let mut group_path = Vec::new();
         let mut cur = Some(group);
         while let Some(i) = cur {
             if let Some(g) = self.group_ref(&self.groups[i]) {
-                group_path.push(g.name.clone());
+                group_path.push(g.name().into_owned());
             }
             cur = self.groups[i].parent;
         }
         group_path.reverse();
 
         let mut custom: Vec<FieldView> = e
-            .fields
-            .iter()
-            .filter(|(k, _)| !is_standard_field(k) && !is_otp_field(k))
-            .map(|(k, v)| FieldView {
-                key: k.clone(),
-                protected: v.is_protected(),
-                value: (!v.is_protected()).then(|| v.get().clone()),
+            .fields()
+            .filter(|x| !is_standard_field(&x.key()) && !is_otp_field(&x.key()))
+            .map(|x| FieldView {
+                key: x.key().into_owned(),
+                protected: x.protected(),
+                value: (!x.protected()).then(|| x.value().into_owned()),
             })
             .collect();
         custom.sort_by(|a, b| a.key.cmp(&b.key));
 
         let mut attachments: Vec<AttachmentView> = e
-            .attachments_named()
-            .map(|(name, a)| AttachmentView {
-                name: name.to_string(),
-                size: a.data.get().len() as u64,
+            .attachments()
+            .map(|a| AttachmentView {
+                name: a.name.into_owned(),
+                size: a.data.map_or(0, |d| d.len() as u64),
             })
             .collect();
         attachments.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let (icon, custom_icon) = icon_of(e.icon(), ICON_KEY);
+        let (icon, custom_icon) = icon_of(e.icon_id(), e.custom_icon(), ICON_KEY);
+        let times = e.times();
         Some(EntryDetail {
             id: id.to_string(),
             group_id: self.groups[group].key.clone(),
             group_path,
-            title: text(fields::TITLE),
-            username: text(fields::USERNAME),
-            url: text(fields::URL),
-            notes: text(fields::NOTES),
-            tags: clean_tags(&e.tags),
-            created: e.times.creation.as_ref().map(iso),
-            modified: e.times.last_modification.as_ref().map(iso),
-            expires: expires(&e.times).map(iso),
-            expired: expired(&e.times),
-            has_password: e.get(fields::PASSWORD).is_some_and(|p| !p.is_empty()),
-            has_totp: has_totp(&e),
+            title: f.text(fields::TITLE),
+            username: f.text(fields::USERNAME),
+            url: f.text(fields::URL),
+            notes: f.text(fields::NOTES),
+            tags: e.tags(),
+            created: times.creation.map(iso),
+            modified: times.last_modification.map(iso),
+            expires: times.expires_at().map(iso),
+            expired: times.expired(),
+            has_password: f.get(fields::PASSWORD).is_some_and(|p| !p.is_empty()),
+            has_totp: totp::has_totp(|k| f.get(k)),
             fields: custom,
             attachments,
             icon,
@@ -550,8 +501,8 @@ impl Vault {
             return None;
         }
         let (e, _) = self.entry_ref(id)?;
-        match e.fields.get(key) {
-            Some(v) => Some(Secret::new(v.get().clone())),
+        match e.field(key) {
+            Some(v) => Some(Secret::new(v.value().into_owned())),
             None if is_standard_field(key) => Some(Secret::default()),
             None => None,
         }
@@ -567,17 +518,20 @@ impl Vault {
         if is_standard_field(key) {
             return Some(false);
         }
-        e.fields.get(key).map(|v| v.is_protected())
+        e.field(key).map(|v| v.protected())
     }
 
     pub fn has_totp(&self, id: &str) -> Option<bool> {
-        self.entry_ref(id).map(|(e, _)| has_totp(&e))
+        let (e, _) = self.entry_ref(id)?;
+        let f = Fields::of(&e);
+        Some(totp::has_totp(|k| f.get(k)))
     }
 
     /// The current TOTP code. `None` when there is no such entry.
     pub fn totp(&self, id: &str) -> Option<Result<TotpView, TotpError>> {
         let (e, _) = self.entry_ref(id)?;
-        Some(Totp::from_fields(|k| e.get(k)).map(|t| {
+        let f = Fields::of(&e);
+        Some(Totp::from_fields(|k| f.get(k)).map(|t| {
             let c = t.now();
             TotpView {
                 code: c.code,
@@ -622,29 +576,30 @@ impl Vault {
             };
             for e in g.entries() {
                 let Some(at) = autotype_of(&e) else { continue };
+                let f = Fields::of(&e);
                 let by_window = at
                     .associations
                     .iter()
                     .find(|a| autotype::window_matches(&a.window, window_title))
-                    .map(|a| self.sequence_for(&e, i, Some(&a.sequence)));
+                    .map(|a| self.sequence_for(&at, i, Some(&a.sequence)));
                 let by_url = || {
-                    let url = e.get(fields::URL).unwrap_or_default();
+                    let url = f.get(fields::URL).unwrap_or_default();
                     page_url
                         .is_some_and(|p| autotype::url_matches(url, p))
-                        .then(|| self.sequence_for(&e, i, None))
+                        .then(|| self.sequence_for(&at, i, None))
                 };
                 let by_title = || {
-                    let own = e
+                    let own = f
                         .get(fields::TITLE)
                         .unwrap_or_default()
                         .trim()
                         .to_lowercase();
                     (at.associations.is_empty() && !own.is_empty() && title.contains(&own))
-                        .then(|| self.sequence_for(&e, i, None))
+                        .then(|| self.sequence_for(&at, i, None))
                 };
                 let sequence = by_window.or_else(by_url).or_else(by_title);
                 if let Some(s) = sequence {
-                    found.push((self.summary(&e, i), s));
+                    found.push((self.summary(&e, &f, i), s));
                 }
             }
         }
@@ -673,7 +628,7 @@ impl Vault {
             .iter()
             .find(|a| autotype::window_matches(&a.window, window_title));
         Some(Ok(self.sequence_for(
-            &e,
+            &at,
             group,
             assoc.map(|a| a.sequence.as_str()),
         )))
@@ -681,19 +636,14 @@ impl Vault {
 
     /// Association sequence, else the entry's default, else the groups',
     /// else KeePass's default. Empty ones do not count.
-    fn sequence_for(&self, e: &EntryRef<'_>, group: usize, assoc: Option<&str>) -> String {
+    fn sequence_for(&self, at: &kdbx::AutoType, group: usize, assoc: Option<&str>) -> String {
         let own = |s: Option<&str>| {
             s.map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
         };
         own(assoc)
-            .or_else(|| {
-                own(e
-                    .autotype
-                    .as_ref()
-                    .and_then(|a| a.default_sequence.as_deref()))
-            })
+            .or_else(|| own(at.default_sequence.as_deref()))
             .or_else(|| self.groups[group].sequence.clone())
             .unwrap_or_else(|| DEFAULT_SEQUENCE.to_string())
     }
@@ -706,9 +656,11 @@ impl Vault {
 
     pub fn custom_icons(&self) -> Vec<CustomIconView> {
         self.db
-            .iter_all_custom_icons()
+            .meta()
+            .custom_icons()
+            .into_iter()
             .map(|i| CustomIconView {
-                id: i.id().uuid().to_string(),
+                id: i.uuid.to_string(),
                 mime: image_mime(&i.data),
                 data: B64.encode(&i.data),
             })
@@ -718,11 +670,16 @@ impl Vault {
 
 /// The entry's auto-type settings when it may be auto-typed. An entry
 /// without an `AutoType` element gets the defaults (enabled, no associations).
-fn autotype_of(e: &EntryRef<'_>) -> Option<keepass::db::AutoType> {
-    match &e.autotype {
+fn autotype_of(e: &Entry<'_>) -> Option<kdbx::AutoType> {
+    match e.autotype() {
         Some(a) if !a.enabled => None,
-        Some(a) => Some(a.clone()),
-        None => Some(keepass::db::AutoType::default()),
+        Some(a) => Some(a),
+        None => Some(kdbx::AutoType {
+            enabled: true,
+            default_sequence: None,
+            obfuscation: 0,
+            associations: Vec::new(),
+        }),
     }
 }
 
@@ -796,11 +753,11 @@ mod tests {
             Vault::open(&fixture("kxc/kdbx41-pw.kdbx"), creds(&wrong)).unwrap_err(),
             OpenError::WrongKey
         );
-        let e31 = Vault::open(&fixture("kxc/kdbx31-pw.kdbx"), creds(&wrong)).unwrap_err();
-        assert!(matches!(
-            e31,
-            OpenError::WrongKey | OpenError::WrongKeyOrCorrupt
-        ));
+        // KDBX 3.1 too, thanks to the start bytes (M0 issue K5)
+        assert_eq!(
+            Vault::open(&fixture("kxc/kdbx31-pw.kdbx"), creds(&wrong)).unwrap_err(),
+            OpenError::WrongKey
+        );
         // the password is right but the key file is missing
         assert_eq!(
             open("kxc/kdbx41-pw-keyxml2.kdbx", true, None).unwrap_err(),
@@ -841,10 +798,7 @@ mod tests {
 
         let full = fs::read(fixture("kxc/kdbx41-pw.kdbx")).unwrap();
         let cut = write("cut.kdbx", &full[..full.len() / 2]);
-        assert!(matches!(
-            try_open(&cut),
-            OpenError::Corrupt | OpenError::WrongKey
-        ));
+        assert_eq!(try_open(&cut), OpenError::Corrupt);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -861,13 +815,14 @@ mod tests {
         json += &serde_json::to_string(&v.search("")).unwrap();
 
         let mut checked = 0;
-        for e in v.db.iter_all_entries() {
-            for (k, value) in &e.fields {
-                let secret = value.is_protected() || is_otp_field(k);
-                let text = value.get();
+        for e in v.db.entries() {
+            for f in e.fields() {
+                let k = f.key();
+                let secret = f.protected() || is_otp_field(&k);
+                let text = f.value();
                 // very short values could match anything by chance
                 if secret && text.chars().count() >= 6 {
-                    assert!(!json.contains(text.as_str()), "{k} leaked");
+                    assert!(!json.contains(text.as_ref()), "{k} leaked");
                     checked += 1;
                 }
             }

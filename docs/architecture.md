@@ -6,8 +6,9 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 
 | 路径 | 内容 |
 |---|---|
-| `crates/mikoshi-core/` | 核心库，不依赖 Tauri：`Secret` 类型、给前端看的数据类型（`model`）、搜索排序、打开和读取 KDBX（`vault`） |
-| `crates/kdbx-compat/` | M0 的兼容性检查工具，同时是回归测试 |
+| `crates/kdbx/` | 自己写的 KDBX 读写层（M6）：读 3.1/4.0/4.1，写 4.1，保存时只改动过的节点。不依赖本项目的其他部分 |
+| `crates/mikoshi-core/` | 核心库，不依赖 Tauri：`Secret` 类型、给前端看的数据类型（`model`）、搜索排序、打开和读取 KDBX（`vault`，建立在 `kdbx` 上） |
+| `crates/kdbx-compat/` | 兼容性检查工具：以 `keepassxc-cli` 为准检查 `kdbx` 的读写，同时是回归测试 |
 | `src-tauri/` | 桌面程序：窗口、命令、当前选中和已解锁的库（`session.rs`）、托盘（`tray.rs`）、全局热键（`hotkeys.rs`）、设置文件、日志 |
 | `src/` | 前端（React + TypeScript）：`api/` 是唯一和 Rust 通信的地方，`app/` 是页面和状态，`components/` 是界面部件，`icons/` 是 KeePass 标准图标，`i18n/` 是中英文文案，`styles/` 是样式 |
 | `design/mockups/` | 选风格时的三套静态样稿，留作记录 |
@@ -28,10 +29,10 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 ### 打开和锁定
 
 - 解锁在后台线程里做（`unlock` 是异步命令），KDF 要花一秒左右也不会卡住窗口
-- keepass-rs 遇到某些坏文件会 panic（M0 的 K9），打开时用 `catch_unwind` 拦住，报"文件已损坏"
-- KeePass 1 的 `.kdb` 文件明确拒绝；KDBX 3.1 分不清密码错误和文件损坏时报"主密码或密钥文件不对，也可能是文件已损坏"（M0 的 K5）
+- 坏文件只会得到错误，不会 panic（`kdbx` 经过模糊测试）；打开时仍用 `catch_unwind` 兜底，万一 panic 也只报"文件已损坏"
+- KeePass 1 的 `.kdb` 文件明确拒绝。KDBX 3.1 解密后先核对开头的校验字节，密码错误和文件损坏能分开（M0 的 K5 已解决）；只有 3.1 头部本身损坏时会报成密码错误，这是格式决定的（3.1 的头部在解密前没有校验）
 - 打开时不写任何文件，包括库本身。分组的折叠状态也只在内存里，不写回
-- 锁定就是丢掉解锁后的 `Vault`：keepass-rs 用 `SecretBox` 存受保护的值，释放时擦除。前端随之卸载工作区，所有缓存一起丢掉
+- 锁定就是丢掉解锁后的 `Vault`：`kdbx` 把受保护的值、附件和解密过程中的缓冲区放在释放时擦除的内存里（未受保护的字段是普通字符串）。前端随之卸载工作区，所有缓存一起丢掉
 - 时间一律用 UTC 的 ISO 8601（`2026-11-12T06:20:00Z`），前端按本地时区显示；文件里没有的时间是 `null`
 - 根分组列出回收站以外的全部条目，其他分组只列自己的条目；回收站排在根分组子分组的最后；搜索跳过回收站和关闭了搜索的分组（`EnableSearching`，未设置时继承父分组）
 
@@ -86,7 +87,7 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 命令失败时只返回一个错误码，例如 `{"code": "locked"}`，前端按当前语言显示对应的文案（`error.locked` 等）。错误里**不带任何用户数据**，所以可以放心写进日志或显示出来。错误码定义在 `src-tauri/src/error.rs`，前端的对应类型在 `src/api/types.ts`。
 
-解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`wrongKeyOrCorrupt`（KDBX 3.1）、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
+解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
 
 ### 剪贴板
 
@@ -148,6 +149,20 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 `open_url` 在 Rust 端取条目的网址：没有协议的补上 `https://`，解析后必须是 http 或 https 且有主机名，否则报 `unsafeUrl`。KeePass 允许的 `cmd://` 之类会运行程序，一律拒绝。用 tauri-plugin-opener 交给默认浏览器；日志里不写网址。
 
+## KDBX 读写层（`crates/kdbx`）
+
+M6 起替代 keepass-rs。原则是**读进来什么就写回什么，只改动过的节点**。
+
+- **分层**：外层容器（`header.rs` 头部和 KDF 参数，`crypto.rs` 接 RustCrypto 的算法，`db.rs` 打开和保存）→ XML 树（`xml.rs`）→ 视图和编辑（`view.rs`）。算法全部来自 RustCrypto（aes、twofish、cbc、chacha20、salsa20、argon2、sha2、hmac）和 flate2，这里只负责把密钥、IV、参数接起来
+- **XML 树**保留元素顺序、属性、空白、注释和不认识的元素。标了 `Protected="True"` 的值在读的时候按文档顺序用内层流解密，存成会擦除的 `Secret` 节点，写的时候用新的内层流重新加密
+- **KDBX 3.1 在打开时就转成 4.x 的形式**：附件从 `Meta/Binaries` 移进附件池并改写引用编号，时间改成 Base64 秒数（KeePass 2 读 KDBX 4 只认这种写法），先校验再去掉 `Meta/HeaderHash`，内层流改用 ChaCha20。这样保存就是把树原样写出去，"重新打开后的树和保存前逐节点相同"对所有版本都成立
+- **保存**一律写 KDBX 4.1：主种子、IV、KDF 种子、内层流密钥每次重新生成；加密算法、KDF 参数（包括 Argon2 的 secret 等其他项）、压缩、头部的公共自定义数据照旧。数据按 1 MiB 分块。保存要重跑一次 KDF，所以需要密钥
+- **编辑**（`entry_mut`、`add_group`、`add_entry`、`add_attachment`、`move_entry`）只碰对应的节点；新节点按兄弟节点的缩进插入。M7、M8 在这上面加功能
+- **坏文件只返回错误，不 panic**：所有读取都先查长度；XML 嵌套超过 256 层拒绝；Argon2 的内存先试着申请，申请不到报错而不是让进程崩溃。KDF 轮数被改得极大时只能等，KeePass 也一样
+- **不支持的**：KeePass 1、ArcFour 内层流、带命名空间前缀的元素名（KeePass 不用）。外层头部里不认识的字段和 3.1 的注释字段，保存时不写回
+- `kdbx` 在 dev/test 构建里也开优化（根目录 `Cargo.toml`）：KDF 循环在这个 crate 里展开，不优化会慢几十倍
+- 测试：`cargo test -p kdbx` 跑全部测试库的往返、K 系列测试库和 2000 例模糊测试（环境变量 `KDBX_FUZZ_CASES` 可加大）；`cargo run -p kdbx-compat --release` 以 `keepassxc-cli` 为准做完整检查，`-- fuzz 600` 跑 10 分钟模糊测试，`-- timing` 比较解锁时间
+
 ## 安全基线
 
 | 项 | 做法 | 在哪 |
@@ -160,7 +175,7 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 | 浏览器自带功能 | release 构建里屏蔽浏览器右键菜单（文本框除外）和浏览器快捷键（刷新、打印、查看源码、查找等） | `src/app/appShell.ts` |
 | 日志 | 秘密用 `Secret` 类型，打不出明文；错误不带用户数据；前端的 ESLint 禁止 `console.log` | `secret.rs`、`error.rs`、`eslint.config.js` |
 | 原型冻结 | `freezePrototype`，防止页面脚本被篡改内置对象后影响通信 | `tauri.conf.json` |
-| panic 不终止进程 | release 保持 `panic = "unwind"`。keepass-rs 遇到某些坏文件会 panic（M0 的 K9），M2 会用 `catch_unwind` 拦住 | 根目录 `Cargo.toml` |
+| panic 不终止进程 | release 保持 `panic = "unwind"`。`kdbx` 对坏文件只返回错误（模糊测试把关），打开时的 `catch_unwind` 是最后一道防线 | 根目录 `Cargo.toml` |
 | 单实例 | 再次启动时把已有窗口切到前台，新进程退出 | `src-tauri/src/lib.rs` |
 | 窗口不会"隐身" | 主窗口启动时先隐藏，界面画好再显示。如果界面加载失败，5 秒后照样显示，不会留下一个看不见的进程。随开机启动（`--hidden`）时例外：程序在托盘里，随时能打开 | `src-tauri/src/windows.rs` |
 | 启动失败有提示 | 界面连不上后台时显示"没能启动"和重试按钮，不会停在空白窗口 | `src/app/MainApp.tsx` |

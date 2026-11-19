@@ -2,8 +2,8 @@
 
 一个 Windows 密码管理器，界面现代，以快捷键为中心，直接读写 KeePass 的 `.kdbx` 数据库。
 
-- 技术栈：Tauri 2 + React + TypeScript，后端是 Rust，用 [keepass-rs](https://github.com/sseemayer/keepass-rs) 读写库文件
-- 当前阶段：M3（搜索、复制、TOTP、自动锁定）开发完成，尚未测试（M2 及之前已完成并打了 tag）。现在能打开真实的 `.kdbx`，浏览、搜索、复制、看验证码，并会自动锁定；**不会写入库文件**
+- 技术栈：Tauri 2 + React + TypeScript，后端是 Rust，用自己写的无损读写层 `crates/kdbx` 读写库文件（M5 之前用的是 [keepass-rs](https://github.com/sseemayer/keepass-rs)）
+- 当前阶段：M6（无损 KDBX 读写层）已完成，下一步是 M7（条目编辑与保存）。现在能打开真实的 `.kdbx`，浏览、搜索、复制、看验证码、自动输入，并会自动锁定；**应用不会写入库文件**（保存在 M7 接上）
 - 文档：功能规格 [docs/features.md](docs/features.md)、里程碑和待处理问题 [docs/milestones.md](docs/milestones.md)、工程结构和前后端约定 [docs/architecture.md](docs/architecture.md)、M0 结论 [docs/m0-report.md](docs/m0-report.md)
 
 ## 运行
