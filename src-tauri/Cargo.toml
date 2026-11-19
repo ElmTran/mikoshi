@@ -46,7 +46,6 @@ log = "0.4"
 serde.workspace = true
 serde_json.workspace = true
 thiserror = "2"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 windows-version = "0.1"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
