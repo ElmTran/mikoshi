@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
 
 /**
- * A selection pill that slides between items instead of jumping (Fluent's
- * navigation indicator). Place the returned element inside `container`
- * (position: relative); it follows the element matching `selector`.
+ * The selection bar that slides between items instead of jumping. Place the
+ * returned element inside `container` (position: relative); it follows the
+ * element matching `selector`, centred on it whatever height CSS gives it.
  */
 export function useSlidingIndicator(
   container: RefObject<HTMLElement | null>,
@@ -31,7 +31,7 @@ export function useSlidingIndicator(
   return pos ? (
     <span
       className={ready ? 'sel-indicator animate' : 'sel-indicator'}
-      style={{ transform: `translateY(${pos.y + pos.h / 2 - 8}px)` }}
+      style={{ transform: `translateY(${pos.y + pos.h / 2}px) translateY(-50%)` }}
       aria-hidden="true"
     />
   ) : null;

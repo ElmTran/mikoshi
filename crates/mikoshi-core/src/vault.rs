@@ -41,7 +41,7 @@ pub use edit::{
     TotpSummary,
 };
 pub use organize::Deleted;
-pub use save::{SaveError, SaveOptions, backup_path};
+pub use save::{SaveError, SaveJob, SaveOptions, Saved, backup_path};
 
 /// Why a database could not be opened. Carries no user data, so it can be
 /// logged and shown as is.
@@ -188,8 +188,11 @@ pub struct Vault {
     /// the file as it was when opened or last saved, to notice changes made
     /// by someone else before overwriting them
     disk: save::DiskState,
-    /// edits not saved yet
-    dirty: bool,
+    /// how many edits were made since opening; `saved_edits` is the count
+    /// the file holds. Unsaved when they differ. A count, not a flag, so an
+    /// edit made while a save runs is not marked saved by it.
+    edits: u64,
+    saved_edits: u64,
     /// saved at least once since it was opened (the format is 4.1 from then on)
     saved: bool,
     /// tree order: depth first, the recycle bin last among its siblings
@@ -248,7 +251,8 @@ impl Vault {
             path: path.to_path_buf(),
             key,
             disk: save::DiskState::of(data),
-            dirty: false,
+            edits: 0,
+            saved_edits: 0,
             saved: false,
             groups,
             group_index,

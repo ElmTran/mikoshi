@@ -316,7 +316,7 @@ export function UnlockScreen({ status }: { status: VaultStatus }) {
   return (
     <main className="unlock-screen">
       <div className="unlock-hero">
-        <AppMark size={64} />
+        <AppMark size={56} />
       </div>
       <div className="unlock-card">
         {creating ? (

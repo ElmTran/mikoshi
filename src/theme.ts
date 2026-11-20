@@ -11,8 +11,8 @@ export function systemTheme(): EffectiveTheme {
 }
 
 /**
- * Applies a theme preference: tells the native window (so Mica and the
- * caption follow), then sets `data-theme` on <html>, which drives every
+ * Applies a theme preference: tells the native window (so its frame and
+ * shadow follow), then sets `data-theme` on <html>, which drives every
  * colour token. For "system" the answer comes from the window itself: right
  * after the override is removed, the page's own media query can still be stale.
  */
@@ -33,10 +33,6 @@ export function onSystemThemeChange(fn: () => void): () => void {
  * Runs a theme change as a circle that grows from `origin` (the button the
  * user clicked). Falls back to an instant switch without View Transitions or
  * with reduced motion.
- *
- * While it runs, the page gets an opaque background (`theme-switching`): the
- * native Mica backdrop changes at once and cannot be animated, so letting it
- * show through would put old-theme text on the new backdrop for a moment.
  */
 export async function revealThemeChange(
   origin: { x: number; y: number } | null,
@@ -49,7 +45,6 @@ export async function revealThemeChange(
   const { x, y } = origin;
   const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
   const root = document.documentElement;
-  root.classList.add('theme-switching');
   try {
     const transition = document.startViewTransition(async () => {
       await change();
@@ -62,7 +57,5 @@ export async function revealThemeChange(
     await transition.finished;
   } catch {
     // a skipped transition still applies the change
-  } finally {
-    root.classList.remove('theme-switching');
   }
 }

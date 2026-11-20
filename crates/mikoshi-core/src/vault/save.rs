@@ -95,20 +95,39 @@ impl Vault {
     }
 
     /// Writes the database to its file. Runs the KDF, so it takes about as
-    /// long as unlocking.
+    /// long as unlocking. The app saves in three steps instead, so the vault
+    /// is not held while the KDF runs: [`Vault::prepare_save`],
+    /// [`SaveJob::run`], [`Vault::finish_save`].
     pub fn save(&mut self, opts: SaveOptions) -> Result<(), SaveError> {
+        let job = self.prepare_save(opts)?;
+        let saved = job.run()?;
+        self.finish_save(saved);
+        Ok(())
+    }
+
+    /// Checks that a save may go ahead (format agreed, file not changed
+    /// elsewhere) and takes a copy of everything it needs. Quick: no KDF.
+    pub fn prepare_save(&self, opts: SaveOptions) -> Result<SaveJob, SaveError> {
         if !opts.upgrade && self.format_upgrade().is_some() {
             return Err(SaveError::FormatUpgrade);
         }
         if !opts.force && self.changed_on_disk() {
             return Err(SaveError::Conflict);
         }
-        let bytes = self.db.save(&self.key).map_err(|_| SaveError::Encrypt)?;
-        write_replacing(&self.path, &bytes, opts.backup)?;
-        self.disk = DiskState::of(&bytes);
-        self.dirty = false;
+        Ok(SaveJob {
+            db: self.db.clone(),
+            key: self.key.clone(),
+            path: self.path.clone(),
+            backup: opts.backup,
+            edits: self.edits,
+        })
+    }
+
+    /// Records a finished save. Edits made while it ran stay unsaved.
+    pub fn finish_save(&mut self, saved: Saved) {
+        self.disk = saved.disk;
+        self.saved_edits = saved.edits;
         self.saved = true;
-        Ok(())
     }
 
     /// Writes the database as a new file next to its own,
@@ -164,6 +183,47 @@ impl Vault {
         let fresh = Vault::open_with(&self.path, self.key.clone(), &data)?;
         *self = fresh;
         Ok(())
+    }
+}
+
+/// A save in progress: a copy of the database as it was when the save began.
+pub struct SaveJob {
+    db: kdbx::Database,
+    key: kdbx::Key,
+    path: PathBuf,
+    backup: bool,
+    edits: u64,
+}
+
+impl std::fmt::Debug for SaveJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // never print the database or the key
+        f.debug_struct("SaveJob")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What a finished save hands back to the vault.
+pub struct Saved {
+    disk: DiskState,
+    edits: u64,
+}
+
+impl SaveJob {
+    /// The file this writes.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Encrypts (runs the KDF) and replaces the file. Needs no lock.
+    pub fn run(self) -> Result<Saved, SaveError> {
+        let bytes = self.db.save(&self.key).map_err(|_| SaveError::Encrypt)?;
+        write_replacing(&self.path, &bytes, self.backup)?;
+        Ok(Saved {
+            disk: DiskState::of(&bytes),
+            edits: self.edits,
+        })
     }
 }
 

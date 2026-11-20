@@ -44,6 +44,7 @@ const COMMANDS: &[&str] = &[
     "generate_password",
     "password_strength",
     "copy_secret",
+    "open_app_file",
     "get_custom_icons",
     "reveal_field",
     "copy_field",

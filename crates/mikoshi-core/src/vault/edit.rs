@@ -397,7 +397,7 @@ fn apply(e: &mut EntryMut<'_>, c: &Checked<'_>, protect: &dyn Fn(&str) -> bool) 
 impl Vault {
     /// Whether there are edits not saved yet.
     pub fn is_dirty(&self) -> bool {
-        self.dirty
+        self.edits != self.saved_edits
     }
 
     /// Whether a standard field is protected in new entries (the database's
@@ -507,7 +507,7 @@ impl Vault {
         apply(&mut e, &c, &protect);
         e.touch();
         self.db.maintain_history(uuid);
-        self.dirty = true;
+        self.edits += 1;
         Ok(true)
     }
 
@@ -529,7 +529,7 @@ impl Vault {
             .ok_or(EditError::NotFound)?;
         let mut e = self.db.entry_mut(uuid).ok_or(EditError::NotFound)?;
         apply(&mut e, &c, &protect);
-        self.dirty = true;
+        self.edits += 1;
         self.relayout();
         Ok(uuid.to_string())
     }
@@ -582,7 +582,7 @@ impl Vault {
         if !self.db.restore_history(uuid, index) {
             return Err(EditError::NotFound);
         }
-        self.dirty = true;
+        self.edits += 1;
         Ok(())
     }
 }

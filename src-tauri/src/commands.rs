@@ -32,8 +32,6 @@ use crate::windows;
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub version: &'static str,
-    /// The main window has the Mica backdrop, so its page must stay transparent
-    pub effects: bool,
     /// Running on demo data (only the browser mock does now)
     pub demo: bool,
     /// Started with Windows: the main window stays hidden until asked for
@@ -105,7 +103,6 @@ fn edit_vault<T>(
 pub fn app_info(state: State<'_, AppState>) -> AppInfo {
     AppInfo {
         version: env!("CARGO_PKG_VERSION"),
-        effects: state.effects,
         demo: false,
         start_hidden: state.start_hidden,
     }
@@ -502,26 +499,53 @@ pub fn restore_history(
 /// the file meanwhile; the UI asks, then retries with `force`. `formatUpgrade`
 /// when the file is KDBX 3.1 or 4.0 and the UI has not confirmed the change
 /// to 4.1 yet.
+///
+/// The KDF runs on a background thread, on a copy of the database: the vault
+/// is locked only to start and to finish, so the windows stay responsive and
+/// other commands keep working. Edits made meanwhile stay unsaved.
 #[tauri::command]
-pub fn save_database(
+pub async fn save_database(
     app: AppHandle,
     state: State<'_, AppState>,
     options: Option<SaveOptions>,
 ) -> AppResult<VaultStatus> {
     let mut opts = options.unwrap_or_default();
     opts.backup = settings(&state)?.current.backup_on_save;
-    {
-        let mut s = session(&state)?;
-        let vault = s.open.as_mut().ok_or(AppError::Locked)?;
-        vault.save(opts).inspect_err(|e| match e {
-            SaveError::Conflict => log::info!("save refused: the file changed elsewhere"),
-            SaveError::Encrypt => log::warn!("save failed: the file does not read back"),
-            SaveError::Write => log::warn!("save failed: cannot write the file"),
-            SaveError::FormatUpgrade => {}
-        })?;
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || save_now(&app2, opts))
+        .await
+        .map_err(|_| AppError::Internal)??;
+    announce(&app, &state)
+}
+
+fn log_save_error(e: &SaveError) {
+    match e {
+        SaveError::Conflict => log::info!("save refused: the file changed elsewhere"),
+        SaveError::Encrypt => log::warn!("save failed: the file does not read back"),
+        SaveError::Write => log::warn!("save failed: cannot write the file"),
+        SaveError::FormatUpgrade => {}
+    }
+}
+
+/// One whole save, on the calling thread (see `save_database`).
+pub fn save_now(app: &AppHandle, opts: SaveOptions) -> AppResult<()> {
+    let state = tauri::Manager::state::<AppState>(app);
+    let _one_at_a_time = state.save_lock.lock().map_err(|_| AppError::Internal)?;
+    let job = {
+        let s = state.vault.lock().map_err(|_| AppError::Internal)?;
+        let vault = s.open.as_ref().ok_or(AppError::Locked)?;
+        vault.prepare_save(opts).inspect_err(log_save_error)?
+    };
+    let path = job.path().to_path_buf();
+    let saved = job.run().inspect_err(log_save_error)?;
+    let mut s = state.vault.lock().map_err(|_| AppError::Internal)?;
+    // locked, or another database opened while this one was being written:
+    // the file is saved, there is just no vault left to tell
+    if let Some(vault) = s.open.as_mut().filter(|v| v.path() == path) {
+        vault.finish_save(saved);
     }
     log::info!("database saved");
-    announce(&app, &state)
+    Ok(())
 }
 
 /// Reads the file again, dropping unsaved edits.
@@ -1083,6 +1107,54 @@ pub fn copy_secret(
     let clears_after = (seconds > 0).then_some(seconds);
     clipboard::copy(&app, &value, true, clears_after)?;
     Ok(CopyResult { clears_after })
+}
+
+// ---------------------------------------------------------------- settings: about
+
+/// Something the "About" settings can open. The paths are decided here; the
+/// UI only names which one.
+#[derive(Deserialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub enum AppFile {
+    /// the third-party licenses (installed next to the program)
+    Notices,
+    /// the folder with settings.json
+    SettingsFolder,
+    /// the folder with the logs
+    LogFolder,
+}
+
+#[tauri::command]
+pub fn open_app_file(app: AppHandle, which: AppFile) -> AppResult<()> {
+    use tauri::Manager;
+    let paths = app.path();
+    let path = match which {
+        AppFile::Notices => {
+            let installed = paths
+                .resource_dir()
+                .map(|d| d.join("THIRD-PARTY-NOTICES.txt"))
+                .ok()
+                .filter(|p| p.is_file());
+            // a development build runs from target\debug: use the repository's copy
+            let dev = || {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("THIRD-PARTY-NOTICES.txt")
+            };
+            installed.unwrap_or_else(dev)
+        }
+        AppFile::SettingsFolder => paths.app_config_dir().map_err(|_| AppError::Internal)?,
+        AppFile::LogFolder => paths.app_log_dir().map_err(|_| AppError::Internal)?,
+    };
+    if !path.exists() {
+        return Err(AppError::FileNotFound);
+    }
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|_| {
+            log::warn!("a file or folder could not be opened");
+            AppError::Internal
+        })
 }
 
 #[cfg(test)]

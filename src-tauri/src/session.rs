@@ -160,6 +160,8 @@ pub fn save_before_leaving(app: &AppHandle) -> Option<std::path::PathBuf> {
         .settings
         .lock()
         .is_ok_and(|s| s.current.backup_on_save);
+    // a save running in the background finishes first
+    let _one_at_a_time = state.save_lock.lock().ok()?;
     let mut s = state.vault.lock().ok()?;
     let vault = s.open.as_mut()?;
     if !vault.is_dirty() {

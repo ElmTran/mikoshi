@@ -40,6 +40,8 @@ pub const TIME_ELEMENTS: &[&str] = &[
 
 /// An open database: the outer settings, the attachment pool and the XML
 /// tree. Saving writes the tree back as it is; only what was edited changes.
+/// A clone is a full copy, protected values included (all wiped on drop).
+#[derive(Clone)]
 pub struct Database {
     pub(crate) header: OuterHeader,
     /// inner stream cipher for the next save

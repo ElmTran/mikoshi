@@ -11,21 +11,14 @@ body,
   margin: 0;
 }
 
+/* one sheet of paper: the main window paints its own, opaque */
 html {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--paper-bg) var(--paper);
+  color: var(--ink);
   font: 400 var(--fs-body) / 20px var(--font-text);
   -webkit-text-size-adjust: none;
 }
 
-/* With Mica (Windows 11) the native backdrop shows through. */
-html.effects.window-main {
-  background: transparent;
-}
-/* ...except while the theme reveal runs (see theme.ts) */
-html.effects.window-main.theme-switching {
-  background: var(--bg);
-}
 html.window-quick,
 html.window-quick body {
   background: transparent;
@@ -66,24 +59,36 @@ ul {
 ul {
   list-style: none;
 }
+/* a search match: underlined in pencil, not coloured */
 mark {
   background: none;
-  color: var(--accent-text);
-  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--ink-3);
+  text-underline-offset: 3px;
 }
+/* key caps */
 kbd {
-  font: inherit;
+  display: inline-block;
+  font: 400 10px / 17px var(--font-mono);
+  color: var(--ink-3);
+  padding: 0 5px;
+  border: 1px solid var(--line-2);
+  border-bottom-width: 1.5px;
+  border-radius: 5px;
+  white-space: nowrap;
 }
 
-/* Fluent focus: a two-tone ring, keyboard only */
+/* keyboard focus: a thin ink ring */
 :focus-visible {
-  outline: 2px solid var(--focus-outer);
-  outline-offset: 1px;
-  box-shadow: 0 0 0 1px var(--focus-inner) inset;
+  outline: 1.5px solid var(--ink);
+  outline-offset: 2px;
 }
-input:focus-visible {
+/* text fields show focus with their own underline */
+input:not([type='checkbox'], [type='radio'], [type='range']):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
   outline: none;
-  box-shadow: none;
 }
 
 .icon {
@@ -97,18 +102,18 @@ input:focus-visible {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--text-3) transparent;
+  scrollbar-color: var(--line-2) transparent;
 }
 
 .muted {
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
+/* one cap per key: Ctrl B */
 .keys {
+  display: inline-flex;
+  gap: 3px;
   white-space: nowrap;
-}
-.keys kbd + kbd::before {
-  content: '+';
 }
 
 /* the theme switch grows as a circle from the clicked button (theme.ts) */

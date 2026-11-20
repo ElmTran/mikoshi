@@ -25,6 +25,7 @@ import { Icon } from '../components/Icon';
 import { Keys } from '../components/bits';
 import { TitleBar } from '../components/TitleBar';
 import { usePrefs, useToast } from './contexts';
+import { shortcutFor } from '../shortcuts';
 import { sortEntries } from './sortEntries';
 
 type Pane = 'groups' | 'list' | 'detail';
@@ -71,6 +72,9 @@ export function Workspace({ status }: { status: VaultStatus }) {
   const [mode, setMode] = useState<Mode>({ kind: 'view' });
   const [ask, setAsk] = useState<Ask | null>(null);
   const [busy, setBusy] = useState(false);
+  // a save after an edit is running; the title bar shows nothing meanwhile
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [autoSavePaused, setAutoSavePaused] = useState(false);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
   // bumped after an edit so the list and the detail load again
   const [version, setVersion] = useState(0);
@@ -390,12 +394,17 @@ export function Workspace({ status }: { status: VaultStatus }) {
               label: t('menu.deleteForGood'),
               icon: 'trash',
               danger: true,
-              keys: 'Delete',
+              keys: settings.shortcuts.deleteEntry,
               onClick: () => deleteEntries([e.id], e.title),
             },
           ]
         : [
-            { label: t('menu.edit'), icon: 'edit', keys: 'Ctrl+E', onClick: () => startEditRef.current() },
+            {
+              label: t('menu.edit'),
+              icon: 'edit',
+              keys: settings.shortcuts.editEntry,
+              onClick: () => startEditRef.current(),
+            },
             {
               label: t('menu.moveTo'),
               icon: 'folder',
@@ -406,13 +415,13 @@ export function Workspace({ status }: { status: VaultStatus }) {
               label: t('menu.delete'),
               icon: 'trash',
               danger: true,
-              keys: 'Delete',
+              keys: settings.shortcuts.deleteEntry,
               onClick: () => deleteEntries([e.id], e.title),
             },
           ];
       setMenu({ x: ev.clientX, y: ev.clientY, items });
     },
-    [deleteEntries, inBin, restore, t],
+    [deleteEntries, inBin, restore, settings.shortcuts.deleteEntry, settings.shortcuts.editEntry, t],
   );
 
   const groupMenu = useCallback(
@@ -428,7 +437,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
             label: t('menu.deleteForGood'),
             icon: 'trash',
             danger: true,
-            keys: 'Delete',
+            keys: settings.shortcuts.deleteEntry,
             onClick: () => deleteGroup(g),
           },
         ];
@@ -455,7 +464,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
               label: t('menu.delete'),
               icon: 'trash',
               danger: true,
-              keys: 'Delete',
+              keys: settings.shortcuts.deleteEntry,
               onClick: () => deleteGroup(g),
             },
           );
@@ -463,7 +472,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
       }
       setMenu({ x: ev.clientX, y: ev.clientY, items });
     },
-    [deleteGroup, emptyBin, inBin, newSubgroup, restore, t],
+    [deleteGroup, emptyBin, inBin, newSubgroup, restore, settings.shortcuts.deleteEntry, t],
   );
 
   // ------------------------------------------------------------ actions
@@ -604,25 +613,33 @@ export function Workspace({ status }: { status: VaultStatus }) {
   }, [fail]);
 
   const runSave = useCallback(
-    (options?: { force?: boolean; upgrade?: boolean }) => {
+    (options?: { force?: boolean; upgrade?: boolean; auto?: boolean }) => {
       // nothing to write: do not touch the file (and do not ask about 4.1)
-      if (!options?.force && !options?.upgrade && !status.dirty) return;
-      setBusy(true);
-      api.saveDatabase(options).then(
+      if (!options?.auto && !options?.force && !options?.upgrade && !status.dirty) return;
+      const auto = Boolean(options?.auto);
+      if (auto) setAutoSaving(true);
+      else setBusy(true);
+      api.saveDatabase({ force: Boolean(options?.force), upgrade: Boolean(options?.upgrade) }).then(
         () => {
           setBusy(false);
+          setAutoSaving(false);
           setAsk(null);
-          toast({ message: t('toast.saved') });
+          // a save that went through ends a pause in saving after each edit
+          setAutoSavePaused(false);
+          // saving after every edit is quiet; a save the user asked for says so
+          if (!auto) toast({ message: t('toast.saved') });
           runAfterSave();
         },
         (e) => {
           setBusy(false);
+          setAutoSaving(false);
           const code = e instanceof AppError ? e.code : 'internal';
           if (code === 'saveConflict') setAsk({ kind: 'conflict' });
           else if (code === 'formatUpgrade') setAsk({ kind: 'upgrade' });
           else {
             setAsk(null);
             afterSave.current = null;
+            if (auto) setAutoSavePaused(true);
             fail(e);
           }
         },
@@ -630,6 +647,24 @@ export function Workspace({ status }: { status: VaultStatus }) {
     },
     [fail, runAfterSave, status.dirty, t, toast],
   );
+
+  /**
+   * Saving after every edit (the `saveOnEdit` setting): a moment after the
+   * last edit, so a burst of edits (new group, then its name) is one save.
+   * Paused when the user cancels the conflict or 4.1 question, or a save
+   * fails, until a save goes through; the title bar then offers Save.
+   */
+  const autoSaveTimer = useRef(0);
+  const scheduleAutoSave = useEffectEvent(() => {
+    if (!settings.saveOnEdit || autoSavePaused) return;
+    window.clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = window.setTimeout(() => runSave({ auto: true }), 250);
+  });
+  useEffect(() => () => window.clearTimeout(autoSaveTimer.current), []);
+  const pauseAutoSave = useCallback(() => {
+    setAsk(null);
+    setAutoSavePaused(true);
+  }, []);
 
   const lock = useCallback(() => {
     setShown({ id: null, values: {} });
@@ -653,7 +688,10 @@ export function Workspace({ status }: { status: VaultStatus }) {
 
   // any edit, wherever it came from, changes what the panes show
   useEffect(() => {
-    const off = listen('vault-edited', () => setVersion((v) => v + 1));
+    const off = listen('vault-edited', () => {
+      setVersion((v) => v + 1);
+      scheduleAutoSave();
+    });
     return () => void off.then((f) => f());
   }, []);
 
@@ -716,13 +754,15 @@ export function Workspace({ status }: { status: VaultStatus }) {
       // a dialog or menu answers its own keys
       if (ask || historyFor || menu || moving || confirm || generatorOpen || renaming) return;
 
-      if (ctrl && !e.shiftKey && !e.altKey && k === 'g') return run(() => setGeneratorOpen(true));
+      // the shortcut the settings assign to this key, if any (§5; see shortcuts.ts)
+      const action = shortcutFor(e, settings.shortcuts);
+      if (action === 'generator') return run(() => setGeneratorOpen(true));
 
-      // editing takes the keyboard: Escape cancels, Ctrl+S saves, the rest
-      // (Tab between fields included) belongs to the form
+      // editing takes the keyboard: Escape cancels, the save shortcut saves,
+      // the rest (Tab between fields included) belongs to the form
       if (mode.kind !== 'view') {
         if (k === 'Escape') return run(closeEditor);
-        if (ctrl && !e.shiftKey && k === 's') return run(() => runSave());
+        if (action === 'save') return run(() => runSave());
         return;
       }
 
@@ -737,43 +777,60 @@ export function Workspace({ status }: { status: VaultStatus }) {
         return run(() => paneRefs[target].current?.focus());
       }
 
+      // fixed: the quick search hotkey's default and the settings
       if (ctrl && e.altKey && k === 'k') return run(() => void api.showQuickSearch().catch(fail));
-      if (e.altKey) return;
-      if (ctrl && !e.shiftKey) {
-        if (k === 'f') return run(() => search.current?.select());
-        if (k === 'l') return run(lock);
-        if (k === 'b') return run(() => detail?.username && actions.copy(Field.UserName));
-        if (k === 'u') return run(() => detail?.url && actions.copy(Field.URL));
-        if (k === 't') return run(() => detail?.hasTotp && actions.copy(Field.Totp));
-        if (k === 'h') return run(() => detail?.hasPassword && actions.toggleReveal(Field.Password));
-        if (k === 'e') return run(actions.edit);
-        if (k === 'n') return run(startNew);
-        if (k === 's') return run(() => runSave());
-        if (k === ',')
-          return run(() => document.querySelector<HTMLButtonElement>('[data-settings-toggle]')?.click());
-        if (k === 'c') {
-          // inside a text box with a selection, Ctrl+C copies the selection
-          const el = e.target as HTMLInputElement | null;
-          if (typing && el && el.selectionStart !== el.selectionEnd) return;
-          if (window.getSelection()?.toString()) return;
-          return run(() => detail?.hasPassword && actions.copy(Field.Password));
+      if (ctrl && !e.shiftKey && !e.altKey && k === ',')
+        return run(() => document.querySelector<HTMLButtonElement>('[data-settings-toggle]')?.click());
+
+      // a key on its own (Delete, F2...) belongs to the search box while typing
+      const lone = !e.ctrlKey && !e.altKey && !e.metaKey;
+      if (action && !(lone && typing)) {
+        switch (action) {
+          case 'search':
+            return run(() => search.current?.select());
+          case 'lock':
+            return run(lock);
+          case 'save':
+            return run(() => runSave());
+          case 'newEntry':
+            return run(startNew);
+          case 'editEntry':
+            return run(actions.edit);
+          case 'copyUsername':
+            return run(() => detail?.username && actions.copy(Field.UserName));
+          case 'copyUrl':
+            return run(() => detail?.url && actions.copy(Field.URL));
+          case 'copyTotp':
+            return run(() => detail?.hasTotp && actions.copy(Field.Totp));
+          case 'togglePassword':
+            return run(() => detail?.hasPassword && actions.toggleReveal(Field.Password));
+          case 'openUrl':
+            return run(actions.openUrl);
+          case 'autotype':
+            return run(actions.autotype);
+          case 'copyPassword': {
+            // with text selected (in the search box or on the page), the
+            // keys copy the selection as usual
+            const el = e.target as HTMLInputElement | null;
+            if (typing && el && el.selectionStart !== el.selectionEnd) return;
+            if (window.getSelection()?.toString()) return;
+            return run(() => detail?.hasPassword && actions.copy(Field.Password));
+          }
+          case 'deleteEntry': {
+            if (at === 'groups') {
+              const g = groupId ? byId.get(groupId) : undefined;
+              if (g?.kind === 'recycleBin') return run(emptyBin);
+              if (g && g.kind !== 'root') return run(() => deleteGroup(g));
+              return;
+            }
+            if (detail) return run(() => deleteEntries([detail.id], detail.title));
+            return;
+          }
         }
       }
-      if (ctrl && e.shiftKey && k === 'u') return run(actions.openUrl);
-      if (ctrl && e.shiftKey && k === 'v') return run(actions.autotype);
-      if (ctrl || e.shiftKey) return;
+      if (e.altKey || ctrl || e.shiftKey) return;
 
       if (k === 'Escape' && query) return run(() => setQuery(''));
-
-      if (k === 'Delete' && !typing) {
-        if (at === 'groups') {
-          const g = groupId ? byId.get(groupId) : undefined;
-          if (g?.kind === 'recycleBin') return run(emptyBin);
-          if (g && g.kind !== 'root') return run(() => deleteGroup(g));
-          return;
-        }
-        if (detail) return run(() => deleteEntries([detail.id], detail.title));
-      }
 
       if (at === 'groups') {
         const g = groupId ? byId.get(groupId) : undefined;
@@ -834,6 +891,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
     runSave,
     selectGroup,
     setOpen,
+    settings.shortcuts,
     startNew,
     t,
     toast,
@@ -855,7 +913,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
         spellCheck={false}
         autoComplete="off"
       />
-      <Keys keys={['Ctrl', 'F']} />
+      {settings.shortcuts.search && <Keys keys={settings.shortcuts.search.split('+')} />}
     </label>
   );
 
@@ -866,7 +924,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
         dirty={status.dirty}
         center={searchBox}
         onQuickSearch={() => void api.showQuickSearch().catch(fail)}
-        onSave={status.dirty ? () => runSave() : undefined}
+        onSave={status.dirty && !autoSaving ? () => runSave() : undefined}
         onLock={lock}
       />
       <div className="body">
@@ -1006,9 +1064,9 @@ export function Workspace({ status }: { status: VaultStatus }) {
       {ask?.kind === 'conflict' && (
         <Dialog
           title={t('dialog.conflict.title')}
-          onClose={() => setAsk(null)}
+          onClose={pauseAutoSave}
           actions={[
-            { label: t('dialog.conflict.cancel'), onClick: () => setAsk(null) },
+            { label: t('dialog.conflict.cancel'), onClick: pauseAutoSave },
             {
               label: t('dialog.conflict.reload'),
               danger: true,
@@ -1083,9 +1141,9 @@ export function Workspace({ status }: { status: VaultStatus }) {
       {ask?.kind === 'upgrade' && (
         <Dialog
           title={t('dialog.upgrade.title')}
-          onClose={() => setAsk(null)}
+          onClose={pauseAutoSave}
           actions={[
-            { label: t('dialog.unsaved.cancel'), onClick: () => setAsk(null) },
+            { label: t('dialog.unsaved.cancel'), onClick: pauseAutoSave },
             {
               label: t('dialog.upgrade.save'),
               primary: true,

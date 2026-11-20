@@ -80,6 +80,51 @@ impl Default for EntrySort {
     }
 }
 
+/// Shortcuts in the main window (features.md §5), in the hotkey text format
+/// (see hotkeys.rs); "" = off. Only the UI reads them: they are handled in
+/// the page, not registered with Windows. `Enter` to edit, `Ctrl+,` for the
+/// settings and the global hotkeys are not here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Shortcuts {
+    pub search: String,
+    pub copy_username: String,
+    pub copy_password: String,
+    pub copy_url: String,
+    pub open_url: String,
+    pub copy_totp: String,
+    pub autotype: String,
+    pub toggle_password: String,
+    pub new_entry: String,
+    pub edit_entry: String,
+    pub delete_entry: String,
+    pub save: String,
+    pub lock: String,
+    pub generator: String,
+}
+
+impl Default for Shortcuts {
+    fn default() -> Self {
+        let s = |t: &str| t.to_string();
+        Shortcuts {
+            search: s("Ctrl+F"),
+            copy_username: s("Ctrl+B"),
+            copy_password: s("Ctrl+C"),
+            copy_url: s("Ctrl+U"),
+            open_url: s("Ctrl+Shift+U"),
+            copy_totp: s("Ctrl+T"),
+            autotype: s("Ctrl+Shift+V"),
+            toggle_password: s("Ctrl+H"),
+            new_entry: s("Ctrl+N"),
+            edit_entry: s("Ctrl+E"),
+            delete_entry: s("Delete"),
+            save: s("Ctrl+S"),
+            lock: s("Ctrl+L"),
+            generator: s("Ctrl+G"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -107,10 +152,15 @@ pub struct Settings {
     pub autotype_key_delay_ms: u32,
     /// keep the previous file as `NAME.bak` before each save
     pub backup_on_save: bool,
+    /// write every change to the file at once (the UI saves after each
+    /// edit); off: changes wait for Ctrl+S
+    pub save_on_edit: bool,
     /// what happens to unsaved edits when the database is locked
     pub lock_unsaved: LockUnsaved,
     /// the password generator's last choices (never a generated password)
     pub generator: mikoshi_core::generator::GeneratorOptions,
+    /// main-window shortcuts
+    pub shortcuts: Shortcuts,
 }
 
 impl Default for Settings {
@@ -131,8 +181,10 @@ impl Default for Settings {
             autotype_hotkey: "Ctrl+Alt+V".into(),
             autotype_key_delay_ms: 20,
             backup_on_save: true,
+            save_on_edit: true,
             lock_unsaved: LockUnsaved::default(),
             generator: Default::default(),
+            shortcuts: Shortcuts::default(),
         }
     }
 }

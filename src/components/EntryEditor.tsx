@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { EditableEntry, EntryEdit, FieldEdit, TotpEdit, TotpSummary } from '../api/types';
 import { usePrefs } from '../app/contexts';
+import { withShortcut } from '../shortcuts';
 import { GeneratorPanel } from './Generator';
 import { Icon } from './Icon';
 import { IconPicker } from './IconPicker';
@@ -103,7 +104,7 @@ function Summary({ totp }: { totp: TotpSummary }) {
 
 /** The key button next to the password field, with the generator in a popover. */
 function GeneratorButton({ onUse }: { onUse: (password: string) => void }) {
-  const { t } = usePrefs();
+  const { t, settings } = usePrefs();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -113,7 +114,7 @@ function GeneratorButton({ onUse }: { onUse: (password: string) => void }) {
       <button
         type="button"
         className={open ? 'act active' : 'act'}
-        title={`${t('editor.generate')} (Ctrl+G)`}
+        title={withShortcut(t('editor.generate'), settings.shortcuts.generator)}
         aria-label={t('editor.generate')}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
@@ -223,7 +224,7 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
         </div>
       </header>
 
-      <div className="card editor-fields">
+      <div className="editor-fields">
         <label className="ef">
           <span>{t('editor.title')}</span>
           <input
@@ -239,7 +240,7 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
         </label>
         <div className="ef">
           <span>{t('editor.password')}</span>
-          <div className="ef-row">
+          <div className="ef-row ef-box">
             <input
               type={showPassword ? 'text' : 'password'}
               value={form.password}
@@ -269,40 +270,42 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
           <span>{t('editor.url')}</span>
           <input value={form.url} onChange={(e) => set('url', e.target.value)} spellCheck={false} />
         </label>
-        <label className="ef">
-          <span>{t('editor.tags')}</span>
-          <input
-            value={form.tags}
-            onChange={(e) => set('tags', e.target.value)}
-            placeholder={t('editor.tagsHint')}
-            spellCheck={false}
-          />
-        </label>
-        <div className="ef">
-          <span>{t('editor.expires')}</span>
-          <div className="ef-row">
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={form.expiresOn}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    expiresOn: e.target.checked,
-                    expires:
-                      e.target.checked && !f.expires ? toLocalInput(new Date().toISOString()) : f.expires,
-                  }))
-                }
-              />
-              <span>{t('editor.expiresOn')}</span>
-            </label>
-            {form.expiresOn && (
-              <input
-                type="datetime-local"
-                value={form.expires}
-                onChange={(e) => set('expires', e.target.value)}
-              />
-            )}
+        <div className="ef-two">
+          <label className="ef">
+            <span>{t('editor.tags')}</span>
+            <input
+              value={form.tags}
+              onChange={(e) => set('tags', e.target.value)}
+              placeholder={t('editor.tagsHint')}
+              spellCheck={false}
+            />
+          </label>
+          <div className="ef">
+            <span>{t('editor.expires')}</span>
+            <div className="ef-row ef-box">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={form.expiresOn}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      expiresOn: e.target.checked,
+                      expires:
+                        e.target.checked && !f.expires ? toLocalInput(new Date().toISOString()) : f.expires,
+                    }))
+                  }
+                />
+                <span>{t('editor.expiresOn')}</span>
+              </label>
+              {form.expiresOn && (
+                <input
+                  type="datetime-local"
+                  value={form.expires}
+                  onChange={(e) => set('expires', e.target.value)}
+                />
+              )}
+            </div>
           </div>
         </div>
         <label className="ef">
@@ -318,7 +321,7 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
 
       <section className="detail-section">
         <h2>{t('editor.fields')}</h2>
-        <div className="card field-rows">
+        <div className="field-rows">
           {form.fields.length === 0 && <div className="muted">{t('editor.totp.none')}</div>}
           {form.fields.map((f, i) => (
             <div className="field-row" key={f.original ?? `new-${i}`}>
@@ -374,7 +377,7 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
 
       <section className="detail-section">
         <h2>{t('editor.totp')}</h2>
-        <div className="card totp-editor">
+        <div className="totp-editor">
           <div className="totp-now">
             <span className="field-label">
               {entry?.totp ? <Summary totp={entry.totp} /> : t('editor.totp.none')}

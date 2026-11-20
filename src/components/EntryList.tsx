@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { usePrefs } from '../app/contexts';
+import { withShortcut } from '../shortcuts';
 import type { EntrySort, EntrySummary, SortKey } from '../api/types';
 import { EntryIcon } from './bits';
 import { Icon } from './Icon';
@@ -106,7 +107,7 @@ export function EntryList({
   onDragEntry,
   onEmptyBin,
 }: Props) {
-  const { t, tn, fmt } = usePrefs();
+  const { t, tn, fmt, settings } = usePrefs();
   const terms = useMemo(() => searchTerms(query), [query]);
   const indicator = useSlidingIndicator(listRef, '.row.on', [selected, entries]);
 
@@ -131,7 +132,7 @@ export function EntryList({
         ) : (
           <button
             className="icon-btn"
-            title={`${t('list.new')} (Ctrl+N)`}
+            title={withShortcut(t('list.new'), settings.shortcuts.newEntry)}
             aria-label={t('list.new')}
             onClick={onNew}
           >

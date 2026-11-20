@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { AppError, Field, type EntryDetail as Detail, type TotpView } from '../api/types';
 import { usePrefs } from '../app/contexts';
+import { shortcutKeys, withShortcut } from '../shortcuts';
 import { EntryIcon, Keys } from './bits';
 import { Icon } from './Icon';
 
@@ -95,10 +96,10 @@ interface RowProps {
   label: string;
   fieldKey: string;
   value: ReactNode;
-  shortcut?: string[];
+  shortcut?: string[] | undefined;
   secret?: boolean;
   shown?: boolean;
-  revealShortcut?: string[];
+  revealShortcut?: string[] | undefined;
   open?: boolean;
   /** no value: shows a dash, and there is nothing to copy */
   empty?: boolean;
@@ -119,8 +120,9 @@ function FieldRow({
   copied,
   actions,
 }: RowProps) {
-  const { t } = usePrefs();
-  const hint = (name: string, keys?: string[]) => (keys ? `${name} (${keys.join('+')})` : name);
+  const { t, settings } = usePrefs();
+  const sc = settings.shortcuts;
+  const hint = (name: string, keys?: string[] | undefined) => (keys ? `${name} (${keys.join('+')})` : name);
   return (
     <div className="field">
       <div className="field-label">{label}</div>
@@ -130,7 +132,7 @@ function FieldRow({
         {open && (
           <button
             className="act"
-            title={hint(t('field.open'), ['Ctrl', 'Shift', 'U'])}
+            title={hint(t('field.open'), shortcutKeys(sc.openUrl))}
             onClick={actions.openUrl}
           >
             <Icon name="open" />
@@ -161,7 +163,8 @@ function FieldRow({
 }
 
 export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) {
-  const { t, fmt } = usePrefs();
+  const { t, fmt, settings } = usePrefs();
+  const sc = settings.shortcuts;
   const secretValue = (key: string) =>
     key in revealed ? (
       <span className="secret-plain">{revealed[key]}</span>
@@ -191,7 +194,7 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
           ) : (
             <button
               className="btn primary"
-              title={`${t('detail.autotype')} (Ctrl+Shift+V)`}
+              title={withShortcut(t('detail.autotype'), sc.autotype)}
               onClick={actions.autotype}
             >
               <Icon name="keyboard" />
@@ -201,7 +204,7 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
           <button className="btn" title={t('history.title')} onClick={actions.history}>
             <Icon name="clock" />
           </button>
-          <button className="btn" title={`${t('detail.edit')} (Ctrl+E)`} onClick={actions.edit}>
+          <button className="btn" title={withShortcut(t('detail.edit'), sc.editEntry)} onClick={actions.edit}>
             <Icon name="edit" />
             {t('detail.edit')}
           </button>
@@ -233,13 +236,13 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
         </div>
       )}
 
-      <div className="card fields">
+      <div className="fields">
         <FieldRow
           label={t('field.username')}
           fieldKey={Field.UserName}
           value={entry.username}
           empty={!entry.username}
-          shortcut={['Ctrl', 'B']}
+          shortcut={shortcutKeys(sc.copyUsername)}
           copied={copied === Field.UserName}
           actions={actions}
         />
@@ -248,10 +251,10 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
             label={t('field.password')}
             fieldKey={Field.Password}
             value={secretValue(Field.Password)}
-            shortcut={['Ctrl', 'C']}
+            shortcut={shortcutKeys(sc.copyPassword)}
             secret
             shown={Field.Password in revealed}
-            revealShortcut={['Ctrl', 'H']}
+            revealShortcut={shortcutKeys(sc.togglePassword)}
             copied={copied === Field.Password}
             actions={actions}
           />
@@ -261,7 +264,7 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
             label={t('field.url')}
             fieldKey={Field.URL}
             value={<span className="link">{entry.url}</span>}
-            shortcut={['Ctrl', 'U']}
+            shortcut={shortcutKeys(sc.copyUrl)}
             open
             copied={copied === Field.URL}
             actions={actions}
@@ -272,7 +275,7 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
             label={t('field.totp')}
             fieldKey={Field.Totp}
             value={<Totp entryId={entry.id} />}
-            shortcut={['Ctrl', 'T']}
+            shortcut={shortcutKeys(sc.copyTotp)}
             copied={copied === Field.Totp}
             actions={actions}
           />
@@ -311,7 +314,7 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
         {entry.attachments.length > 0 && (
           <ul className="attachments">
             {entry.attachments.map((a) => (
-              <li key={a.name} className="card">
+              <li key={a.name}>
                 <Icon name="clip" />
                 <span className="att-name">{a.name}</span>
                 <span className="att-size">{fmt.size(a.size)}</span>

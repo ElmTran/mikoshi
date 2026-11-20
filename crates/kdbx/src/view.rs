@@ -15,7 +15,7 @@ use crate::xml::{Element, Node};
 
 /// Where each current group and entry sits in the tree: child indices from
 /// the document root. Rebuilt after every structural edit.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Index {
     pub(crate) root_group: Option<Vec<usize>>,
     pub(crate) groups: HashMap<Uuid, Vec<usize>>,

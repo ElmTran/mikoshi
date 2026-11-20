@@ -1,8 +1,11 @@
 /* Quick search window: a transparent borderless window; the panel and its
-   shadow are drawn here, with some margin around it for the shadow. */
+   shadow are drawn here, with some margin around it for the shadow. The panel
+   is the one thing that floats: paper at partial opacity, blurred, with a
+   hairline edge. (A WebView cannot blur other programs behind it, so the
+   blur only reaches what is inside the window.) */
 
 html.browser.window-quick {
-  background: var(--bg);
+  background: var(--paper-bg);
 }
 
 .quick-stage {
@@ -20,86 +23,89 @@ html.browser.window-quick {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: var(--r-layer);
-  background: var(--flyout);
-  box-shadow:
-    0 16px 40px rgba(0, 0, 0, 0.26),
-    0 0 0 1px var(--stroke);
+  border-radius: 18px;
+  background: var(--glass) var(--paper);
+  border: 1px solid var(--line-2);
+  backdrop-filter: blur(14px) saturate(1.05);
+  box-shadow: var(--shadow-quick);
   animation: qs-in var(--t-slow) var(--ease-decelerate);
-}
-/* a hairline of the gradient along the top edge */
-.qs::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: 2px;
-  background: var(--grad);
-  z-index: 1;
 }
 
 .qs-input {
   flex: none;
-  height: 58px;
+  height: 64px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 2px 16px 0;
-  border-bottom: 1px solid var(--divider);
-  color: var(--text-2);
+  gap: 14px;
+  padding: 0 24px;
+  color: var(--ink-3);
 }
 .qs-input input {
   flex: 1;
   height: 100%;
   font-size: var(--fs-body-large);
-  color: var(--text);
+  color: var(--ink);
 }
 .qs-input input::placeholder {
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 .qs-db {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--ink-3);
   white-space: nowrap;
 }
 
 .qs-caption {
-  padding: 10px 18px 0;
+  padding: 0 24px 8px;
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  letter-spacing: var(--label-tracking);
+  color: var(--ink-3);
 }
 
+/* Lines between the results keep clear of the panel's edge. The list is
+   inset by margin plus padding, so the selection bar can sit in the padding
+   without being clipped by the scroll box. */
 .qs-results {
   position: relative;
   max-height: 336px;
   overflow: auto;
-  padding: 6px;
+  margin: 0 14px;
+  padding: 0 10px;
 }
 .qr {
   position: relative;
-  height: 52px;
+  height: 56px;
+  flex: none;
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 12px;
-  padding: 0 12px;
-  border-radius: var(--r-control);
-  transition: background var(--t-fast) linear;
+  padding: 0 4px 0 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.qr:first-child {
+  border-top: 1px solid var(--line);
 }
 .qr.on {
-  background: var(--subtle-selected);
+  color: var(--ink);
+}
+.qr.on .qr-title {
+  font-weight: 600;
 }
 .qr.on::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 18px;
-  width: 3px;
-  height: 16px;
-  border-radius: 2px;
-  background: var(--grad-vertical);
+  left: -10px;
+  top: 50%;
+  width: 2px;
+  height: 26px;
+  margin-top: -13px;
+  border-radius: 1px;
+  background: var(--ink);
   animation: fade-in var(--t-normal) linear;
 }
 .qr-main {
@@ -113,13 +119,16 @@ html.browser.window-quick {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.qr-sub:empty {
+  display: none;
+}
 .qr-sub {
   font-size: var(--fs-caption);
   line-height: 16px;
-  color: var(--text-2);
+  color: var(--ink-3);
 }
 .qr-totp {
-  color: var(--text-3);
+  color: var(--ink-3);
   display: grid;
   place-items: center;
 }
@@ -128,16 +137,16 @@ html.browser.window-quick {
   align-items: center;
   gap: 6px;
   font-size: var(--fs-caption);
-  color: var(--text-2);
+  color: var(--ink-2);
   animation: flash-in var(--t-slow) var(--ease-spring);
 }
 .qr-flash.ok {
-  color: var(--success);
+  color: var(--ink);
 }
 .qs-empty {
   padding: 28px 20px;
   text-align: center;
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .qs-foot {
@@ -145,43 +154,35 @@ html.browser.window-quick {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 18px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--divider);
+  padding: 12px 24px 14px;
   font-size: var(--fs-caption);
-  color: var(--text-2);
+  color: var(--ink-3);
 }
 .qs-foot .hint {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.qs-foot kbd {
-  color: var(--text);
-  font-weight: 600;
-}
 
 .qr-menu {
   top: auto;
   right: auto;
-  width: 190px;
+  width: 200px;
   padding: 4px;
   z-index: 5;
 }
 .qr-menu .menu-item:disabled {
   opacity: 0.45;
 }
-.qr-menu kbd {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-}
 
 .qs-locked {
-  padding: 20px 20px 22px;
+  padding: 22px 24px 24px;
 }
 .unlock-form.compact .unlock-label {
+  margin: 0 0 4px;
   font-size: var(--fs-body);
-  color: var(--text);
-  margin-bottom: 4px;
+  letter-spacing: 0;
+  color: var(--ink);
 }
 
 @keyframes qs-in {

@@ -80,7 +80,7 @@ impl Vault {
                 self.db.move_entry(u, bin);
             }
         }
-        self.dirty = true;
+        self.edits += 1;
         self.relayout();
         Ok(if permanent {
             Deleted::Permanently
@@ -109,7 +109,7 @@ impl Vault {
                 .ok_or(EditError::NotFound)?;
             self.db.move_group(uuid, bin);
         }
-        self.dirty = true;
+        self.edits += 1;
         self.relayout();
         Ok(if permanent {
             Deleted::Permanently
@@ -158,7 +158,7 @@ impl Vault {
         if !moved {
             return Err(EditError::NotAllowed);
         }
-        self.dirty = true;
+        self.edits += 1;
         self.relayout();
         Ok(())
     }
@@ -182,7 +182,7 @@ impl Vault {
             self.db.delete_group(g);
         }
         if n > 0 {
-            self.dirty = true;
+            self.edits += 1;
             self.relayout();
         }
         Ok(n)
@@ -204,7 +204,7 @@ impl Vault {
             .db
             .add_group(self.groups[i].id, name)
             .ok_or(EditError::NotFound)?;
-        self.dirty = true;
+        self.edits += 1;
         self.relayout();
         Ok(id.to_string())
     }
@@ -221,7 +221,7 @@ impl Vault {
             return Ok(());
         }
         self.db.rename_group(uuid, name);
-        self.dirty = true;
+        self.edits += 1;
         Ok(())
     }
 
@@ -236,7 +236,7 @@ impl Vault {
         if !self.db.move_group(node.id, self.groups[t].id) {
             return Err(EditError::NotAllowed);
         }
-        self.dirty = true;
+        self.edits += 1;
         self.relayout();
         Ok(())
     }
@@ -261,7 +261,7 @@ impl Vault {
             }
         }
         if moved {
-            self.dirty = true;
+            self.edits += 1;
             self.relayout();
         }
         Ok(())
@@ -305,7 +305,7 @@ impl Vault {
         // file content is encrypted with the database either way
         self.db.add_attachment(uuid, &name, data, false);
         self.db.maintain_history(uuid);
-        self.dirty = true;
+        self.edits += 1;
         Ok(name)
     }
 
@@ -325,7 +325,7 @@ impl Vault {
         e.touch();
         self.db.remove_attachment(uuid, name);
         self.db.maintain_history(uuid);
-        self.dirty = true;
+        self.edits += 1;
         Ok(())
     }
 }

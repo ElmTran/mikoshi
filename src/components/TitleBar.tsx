@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePrefs } from '../app/contexts';
+import { withShortcut } from '../shortcuts';
 import { appWindow } from '../api/window';
 import { AppMark } from './bits';
 import { Icon } from './Icon';
-import { SettingsButton } from './SettingsFlyout';
+import { SettingsButton } from './Settings';
 
 interface Props {
   fileName?: string;
@@ -18,7 +19,7 @@ interface Props {
 
 /** Custom title bar: drag area, file name, actions and the caption buttons. */
 export function TitleBar({ fileName, dirty, center, onQuickSearch, onSave, onLock }: Props) {
-  const { t, info } = usePrefs();
+  const { t, info, settings } = usePrefs();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -31,7 +32,7 @@ export function TitleBar({ fileName, dirty, center, onQuickSearch, onSave, onLoc
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="tb-brand" data-tauri-drag-region>
-        <AppMark size={16} />
+        <AppMark size={22} />
         <span data-tauri-drag-region>Mikoshi</span>
       </div>
       {fileName && (
@@ -52,7 +53,7 @@ export function TitleBar({ fileName, dirty, center, onQuickSearch, onSave, onLoc
         {onQuickSearch && (
           <button
             className="tb-btn icon-only"
-            title={`${t('toolbar.quickSearch')} (Ctrl+Alt+K)`}
+            title={withShortcut(t('toolbar.quickSearch'), settings.quickSearchHotkey)}
             aria-label={t('toolbar.quickSearch')}
             onClick={onQuickSearch}
           >
@@ -60,14 +61,22 @@ export function TitleBar({ fileName, dirty, center, onQuickSearch, onSave, onLoc
           </button>
         )}
         {onSave && (
-          <button className="tb-btn save" title={`${t('editor.save')} (Ctrl+S)`} onClick={onSave}>
+          <button
+            className="tb-btn save"
+            title={withShortcut(t('editor.save'), settings.shortcuts.save)}
+            onClick={onSave}
+          >
             <Icon name="check" />
             <span>{t('editor.save')}</span>
           </button>
         )}
         <SettingsButton />
         {onLock && (
-          <button className="tb-btn" title={`${t('toolbar.lock')} (Ctrl+L)`} onClick={onLock}>
+          <button
+            className="tb-btn"
+            title={withShortcut(t('toolbar.lock'), settings.shortcuts.lock)}
+            onClick={onLock}
+          >
             <Icon name="lock" />
             <span>{t('toolbar.lock')}</span>
           </button>

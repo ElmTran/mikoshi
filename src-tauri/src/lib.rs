@@ -20,10 +20,11 @@ use tauri_plugin_log::{Target, TargetKind};
 pub struct AppState {
     pub settings: Mutex<settings::Store>,
     pub vault: Mutex<session::Session>,
+    /// held for a whole save, so two saves never write the file at once;
+    /// the vault itself is locked only to start and to finish one
+    pub save_lock: Mutex<()>,
     /// what we last put on the clipboard, to clear it again safely
     pub clipboard: clipboard::Tracker,
-    /// the main window has the Mica backdrop, so its page must stay transparent
-    pub effects: bool,
     /// started with Windows (`--hidden`): stay in the tray, the main window
     /// is not shown until asked for
     pub start_hidden: bool,
@@ -96,7 +97,6 @@ pub fn run() {
             // wrong only shows in production builds, where pages load at once:
             // the first calls fail and the window stays blank.)
             let config_dir = app.path().app_config_dir()?;
-            let effects = windows::supports_mica();
             let store = settings::Store::load(config_dir);
             // start on the database used last (features.md §3.1)
             let last = store.current.recent.first().map(|r| PathBuf::from(&r.path));
@@ -109,18 +109,15 @@ pub fn run() {
             app.manage(AppState {
                 settings: Mutex::new(store),
                 vault: Mutex::new(session::Session::new(last)),
+                save_lock: Mutex::new(()),
                 clipboard: clipboard::Tracker::default(),
-                effects,
                 start_hidden,
             });
             windows::create_all(app.handle())?;
             tray::create(app.handle())?;
             autolock::start(app.handle());
 
-            log::info!(
-                "Mikoshi {} started (window effects: {effects})",
-                env!("CARGO_PKG_VERSION")
-            );
+            log::info!("Mikoshi {} started", env!("CARGO_PKG_VERSION"));
             if !start_hidden {
                 windows::show_main_if_frontend_is_stuck(app.handle());
             }
@@ -196,6 +193,7 @@ pub fn run() {
             commands::generate_password,
             commands::password_strength,
             commands::copy_secret,
+            commands::open_app_file,
             commands::get_custom_icons,
             commands::reveal_field,
             commands::copy_field,

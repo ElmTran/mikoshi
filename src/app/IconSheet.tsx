@@ -16,7 +16,7 @@ export default function IconSheet() {
               <KpIcon id={id} size={16} />
               <KpIcon id={id} size={24} />
               <KpIcon id={id} size={48} />
-              <span className={`avatar md hue-${id % 6}`}>
+              <span className="avatar md">
                 <KpIcon id={id} size={18} />
               </span>
             </div>

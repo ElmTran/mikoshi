@@ -96,7 +96,6 @@ export interface VaultStatus {
 
 export interface AppInfo {
   version: string;
-  effects: boolean;
   demo: boolean;
   /** started with Windows: the main window stays hidden until asked for */
   startHidden: boolean;
@@ -147,6 +146,10 @@ export interface Settings {
   autotypeKeyDelayMs: number;
   /** keep the previous file as NAME.bak before each save */
   backupOnSave: boolean;
+  /** write every change to the file at once; off: changes wait for Ctrl+S */
+  saveOnEdit: boolean;
+  /** main-window shortcuts, hotkey format; "" = off */
+  shortcuts: Shortcuts;
   /** unsaved edits when the database locks: save, or ask on a manual lock */
   lockUnsaved: LockUnsaved;
   /** the password generator's last choices */
@@ -199,6 +202,24 @@ export interface Generated {
 /** What a delete did. */
 export type Deleted = 'toRecycleBin' | 'permanently';
 
+/** Main-window shortcuts (features.md §5); see shortcuts.ts. */
+export interface Shortcuts {
+  search: string;
+  copyUsername: string;
+  copyPassword: string;
+  copyUrl: string;
+  openUrl: string;
+  copyTotp: string;
+  autotype: string;
+  togglePassword: string;
+  newEntry: string;
+  editEntry: string;
+  deleteEntry: string;
+  save: string;
+  lock: string;
+  generator: string;
+}
+
 export type LockUnsaved = 'save' | 'ask';
 
 /** What became of a hotkey from the settings. */
@@ -230,6 +251,23 @@ export const DEFAULT_SETTINGS: Settings = {
   autotypeHotkey: 'Ctrl+Alt+V',
   autotypeKeyDelayMs: 20,
   backupOnSave: true,
+  saveOnEdit: true,
+  shortcuts: {
+    search: 'Ctrl+F',
+    copyUsername: 'Ctrl+B',
+    copyPassword: 'Ctrl+C',
+    copyUrl: 'Ctrl+U',
+    openUrl: 'Ctrl+Shift+U',
+    copyTotp: 'Ctrl+T',
+    autotype: 'Ctrl+Shift+V',
+    togglePassword: 'Ctrl+H',
+    newEntry: 'Ctrl+N',
+    editEntry: 'Ctrl+E',
+    deleteEntry: 'Delete',
+    save: 'Ctrl+S',
+    lock: 'Ctrl+L',
+    generator: 'Ctrl+G',
+  },
   lockUnsaved: 'save',
   generator: DEFAULT_GENERATOR,
 };

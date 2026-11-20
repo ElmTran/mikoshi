@@ -65,7 +65,7 @@ export function HistoryDialog({ entryId, onClose, onRestored, onError }: Props) 
 
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog card history" role="dialog" aria-modal="true" aria-label={t('history.title')}>
+      <div className="dialog history" role="dialog" aria-modal="true" aria-label={t('history.title')}>
         <h2 className="dialog-title">{t('history.title')}</h2>
         {items && items.length === 0 ? (
           <div className="dialog-body muted">{t('history.empty')}</div>
@@ -82,6 +82,8 @@ export function HistoryDialog({ entryId, onClose, onRestored, onError }: Props) 
                     <button
                       className={picked === h.index ? 'on' : ''}
                       onClick={() => {
+                        // the shown version again: nothing to load
+                        if (picked === h.index) return;
                         setPicked(h.index);
                         // a revealed password belongs to the version it was read from
                         setPassword(null);
@@ -101,7 +103,7 @@ export function HistoryDialog({ entryId, onClose, onRestored, onError }: Props) 
                     <h3 className="detail-title">{view.title}</h3>
                     <div className="detail-path">{fmt.dateTime(view.modified)}</div>
                   </div>
-                  <div className="card fields">
+                  <div className="fields">
                     <div className="field">
                       <div className="field-label">{t('field.username')}</div>
                       <div className="field-value">{view.username || '—'}</div>

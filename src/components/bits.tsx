@@ -15,27 +15,20 @@ export function AppMark({ size = 18 }: { size?: number }) {
   );
 }
 
-const GLYPH = { sm: 14, md: 18, lg: 28 } as const;
-
-/** A stable colour from the title, so each entry keeps its tile colour. */
-function hue(title: string) {
-  let h = 0;
-  for (const ch of title) h = (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
-  return h % 6;
-}
+const GLYPH = { sm: 14, md: 16, lg: 26 } as const;
 
 /**
  * An entry's icon: its custom icon if the database has one, otherwise its
- * KeePass standard icon on a coloured tile.
+ * KeePass standard icon drawn in ink on a hairline tile.
  */
 export function EntryIcon({
   icon,
   customIcon,
-  title,
   size = 'md',
 }: {
   icon: number;
   customIcon: string | null;
+  /** the entry's title (callers pass it; the tile no longer depends on it) */
   title: string;
   size?: 'sm' | 'md' | 'lg';
 }) {
@@ -50,7 +43,7 @@ export function EntryIcon({
     );
   }
   return (
-    <span className={`avatar ${size} hue-${hue(title)}`} aria-hidden="true">
+    <span className={`avatar ${size}`} aria-hidden="true">
       <KpIcon id={icon} size={GLYPH[size]} />
     </span>
   );

@@ -1,6 +1,6 @@
 [package]
 name = "mikoshi"
-version = "0.1.0"
+version = "0.9.0"
 description = "Mikoshi: a keyboard-first KeePass password manager for Windows"
 edition.workspace = true
 license.workspace = true
@@ -47,7 +47,6 @@ log = "0.4"
 serde.workspace = true
 serde_json.workspace = true
 thiserror = "2"
-windows-version = "0.1"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 

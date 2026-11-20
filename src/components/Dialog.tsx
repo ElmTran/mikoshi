@@ -17,7 +17,7 @@ interface Props {
 }
 
 /**
- * A modal over the whole window: a card with a title, the message and a row
+ * A modal over the whole window: a sheet with a title, the message and a row
  * of actions. Enter runs the primary action, Esc closes.
  */
 export function Dialog({ title, children, actions, onClose }: Props) {
@@ -46,7 +46,7 @@ export function Dialog({ title, children, actions, onClose }: Props) {
 
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog card" role="dialog" aria-modal="true" aria-label={title} ref={card}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-label={title} ref={card}>
         <h2 className="dialog-title">{title}</h2>
         {children && <div className="dialog-body">{children}</div>}
         <div className="dialog-actions">

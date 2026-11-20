@@ -1,5 +1,5 @@
-//! Window handling: creating the windows, the Mica background, showing,
-//! hiding, sizing and focusing.
+//! Window handling: creating the windows, showing, hiding, sizing and
+//! focusing.
 //!
 //! A hidden window's WebView is put to sleep (`set_awake`), which gives most
 //! of its memory back. So every show and hide goes through `show` and `hide`
@@ -8,7 +8,6 @@
 use std::sync::Mutex;
 
 use tauri::webview::PageLoadEvent;
-use tauri::window::{Effect, EffectsBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -22,22 +21,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
 #[derive(Default)]
 pub struct PreviousWindow(Mutex<Option<isize>>);
 
-/// Mica needs Windows 11 (build 22000+). On Windows 10 the windows stay
-/// transparent-capable but the frontend paints a solid background instead.
-pub fn supports_mica() -> bool {
-    windows_version::OsVersion::current().build >= 22000
-}
-
 /// Creates the windows described in tauri.conf.json. Called from `setup`
 /// after the app state is registered; see the note there.
 pub fn create_all(app: &AppHandle) -> tauri::Result<()> {
     for config in &app.config().app.windows {
+        // No window effects: the main window paints its own paper background,
+        // and the quick search box draws its own panel (rounded, with a
+        // shadow) on a transparent window.
+        #[cfg_attr(not(debug_assertions), allow(unused_mut))]
         let mut builder = WebviewWindowBuilder::from_config(app, config)?;
-        // The quick search box draws its own panel (rounded, with a shadow)
-        // on a transparent window, so only the main window gets Mica.
-        if config.label == "main" && supports_mica() {
-            builder = builder.effects(EffectsBuilder::new().effect(Effect::Mica).build());
-        }
         // dev-desktop mode (see `dev_desktop`): the WebView must not grab the
         // keyboard focus when it is made, which would activate the window
         #[cfg(debug_assertions)]
@@ -120,6 +112,57 @@ mod dev_desktop {
             }
             move_window(&w);
         }
+        guard(app);
+    }
+
+    /// Keeps the windows on that desktop for as long as the program runs.
+    /// Moving a window that is still hidden does not stick: Windows decides
+    /// where it goes when it is first shown, and how soon that happens
+    /// depends on how fast the page loads (a cold start lost the race).
+    /// So a thread looks every 50 ms and moves back any visible window that
+    /// is not there. It is never activated, so the screen does not switch;
+    /// at worst it shows on the wrong desktop for a moment.
+    fn guard(app: &AppHandle) {
+        let Some(desktop) = wanted() else { return };
+        let windows: Vec<isize> = ["main", "quick"]
+            .iter()
+            .filter_map(|l| app.get_webview_window(l))
+            .filter_map(|w| w.hwnd().ok())
+            .map(|h| h.0 as isize)
+            .collect();
+        std::thread::spawn(move || {
+            use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
+            // SAFETY: plain COM calls on this thread; the handles belong to
+            // this process and are checked with IsWindow before each use
+            let Some(m) = (unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                CoCreateInstance::<_, IVirtualDesktopManager>(
+                    &VirtualDesktopManager,
+                    None,
+                    CLSCTX_ALL,
+                )
+                .ok()
+            }) else {
+                return;
+            };
+            loop {
+                for &h in &windows {
+                    let hwnd = HWND(h as *mut _);
+                    // SAFETY: see above
+                    unsafe {
+                        if !IsWindow(Some(hwnd)).as_bool() || !IsWindowVisible(hwnd).as_bool() {
+                            continue;
+                        }
+                        if m.GetWindowDesktopId(hwnd).is_ok_and(|d| d != desktop)
+                            && m.MoveWindowToDesktop(hwnd, &desktop).is_ok()
+                        {
+                            log::info!("a window showed on the wrong desktop; moved back");
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
     }
 
     /// Puts a window on the desktop in `MIKOSHI_DEV_DESKTOP`. Harmless when

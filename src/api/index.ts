@@ -136,6 +136,8 @@ export const api = {
   passwordStrength: (password: string) => call<Strength>('password_strength', { password }),
   /** copies a value already on screen (a generated password) as a secret */
   copySecret: (value: string) => call<CopyResult>('copy_secret', { value }),
+  /** opens the licenses file, or the settings or log folder, in Explorer */
+  openAppFile: (which: 'notices' | 'settingsFolder' | 'logFolder') => call<void>('open_app_file', { which }),
   copyField: (entryId: string, key: string) => call<CopyResult>('copy_field', { entryId, key }),
   getTotp: (entryId: string) => call<TotpView>('get_totp', { entryId }),
   /** opens the entry's URL in the default browser (http and https only) */

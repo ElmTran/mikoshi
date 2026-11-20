@@ -54,6 +54,7 @@
     "allow-generate-password",
     "allow-password-strength",
     "allow-copy-secret",
+    "allow-open-app-file",
     "allow-get-custom-icons",
     "allow-reveal-field",
     "allow-copy-field",

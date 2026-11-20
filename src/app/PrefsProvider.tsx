@@ -46,10 +46,6 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = locale;
   }, [locale]);
 
-  useEffect(() => {
-    document.documentElement.classList.toggle('effects', Boolean(info?.effects));
-  }, [info]);
-
   const update = useCallback(
     async (patch: Partial<Settings>, origin?: { x: number; y: number }) => {
       if (!settings) return;

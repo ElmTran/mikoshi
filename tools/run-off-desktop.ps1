@@ -81,8 +81,12 @@ sh.Run """$exe""", 0, False
 "@ | Set-Content -Path $vbs -Encoding ASCII
 
 $task = 'mikoshi-off-desktop'
-schtasks /create /tn $task /tr "wscript.exe //B //Nologo `"$vbs`"" /sc once /st 23:59 /f | Out-Null
-schtasks /run /tn $task | Out-Null
+# Register-ScheduledTask rather than schtasks: a task made by schtasks does
+# not start on battery power, and just sits "Queued" on a laptop
+$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "//B //Nologo `"$vbs`""
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+Register-ScheduledTask -TaskName $task -Action $action -Settings $settings -Force | Out-Null
+Start-ScheduledTask -TaskName $task
 Start-Sleep -Milliseconds 1500
-schtasks /delete /tn $task /f | Out-Null
+Unregister-ScheduledTask -TaskName $task -Confirm:$false
 "started $exe via Task Scheduler (desktop $Desktop, CDP port $Port)"

@@ -119,7 +119,8 @@ impl Vault {
             path: new.path.to_path_buf(),
             key,
             disk: save::DiskState::of(&bytes),
-            dirty: false,
+            edits: 0,
+            saved_edits: 0,
             // already KDBX 4.1: no format question on the first save
             saved: true,
             groups,

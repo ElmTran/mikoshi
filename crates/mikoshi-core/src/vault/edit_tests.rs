@@ -722,3 +722,26 @@ fn a_standard_icon_can_be_picked() {
     e.icon = Some(5);
     assert!(!v.update_entry(&id, &e).unwrap());
 }
+
+#[test]
+fn an_edit_made_while_saving_stays_unsaved() {
+    let (_dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let id = first_entry(&v);
+    let mut e = edit_of(&v, &id);
+    e.title = "First".into();
+    v.update_entry(&id, &e).unwrap();
+
+    // the save copies the database, then runs without the vault
+    let job = v.prepare_save(SaveOptions::default()).unwrap();
+    let mut e = edit_of(&v, &id);
+    e.title = "Second".into();
+    v.update_entry(&id, &e).unwrap();
+    let saved = job.run().unwrap();
+    v.finish_save(saved);
+    assert!(v.is_dirty(), "the second edit is not in the file yet");
+    assert_eq!(reopened(&v).entry(&id).unwrap().title, "First");
+
+    v.save(SaveOptions::default()).unwrap();
+    assert!(!v.is_dirty());
+    assert_eq!(reopened(&v).entry(&id).unwrap().title, "Second");
+}

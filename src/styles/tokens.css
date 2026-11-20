@@ -1,25 +1,30 @@
-/* Design tokens. Native Windows 11 (Fluent) look, plus one gradient accent.
-   Every colour in the UI comes from here; components never hard-code one.
-   To retune the gradient, change --grad-1..3 and --wash. */
+/* Design tokens. "Paper and ink": the window is one sheet of warm paper with
+   a faint grain, everything on it is drawn in ink greys, and hairlines divide
+   the regions. No colour except a muted red for errors and destructive acts.
+   Every colour in the UI comes from here; components never hard-code one. */
 
 :root {
   --font-text: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
-  --font-display:
-    'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  /* large titles: Latin in a book serif, Chinese falls back to YaHei */
+  --font-serif: 'Palatino Linotype', 'Book Antiqua', Georgia, 'Microsoft YaHei UI', 'Microsoft YaHei', serif;
   --font-mono: 'Cascadia Mono', Consolas, 'Microsoft YaHei UI', monospace;
 
-  /* Fluent type ramp */
   --fs-caption: 12px;
   --fs-body: 14px;
-  --fs-body-large: 18px;
+  --fs-body-large: 20px;
   --fs-subtitle: 20px;
   --fs-title: 28px;
+  /* small labels above values */
+  --label-tracking: 0.06em;
+  /* serif titles */
+  --title-tracking: -0.015em;
 
-  --r-control: 4px;
-  --r-layer: 8px;
+  --r-control: 8px;
+  --r-tile: 9px;
+  --r-layer: 14px;
   --r-pill: 999px;
 
-  /* Fluent motion: fast in, gentle settle */
+  /* motion: fast in, gentle settle */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --ease-decelerate: cubic-bezier(0, 0, 0, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -28,98 +33,69 @@
   --t-slow: 250ms;
   --t-slower: 333ms;
 
-  --titlebar-h: 48px;
-  --nav-w: 240px;
-  --list-w: 356px;
+  --titlebar-h: 52px;
+  --nav-w: 216px;
+  --list-w: 344px;
+  /* hairlines between the panes stop this far short of top and bottom */
+  --pane-gap: 28px;
+  /* lines inside the detail pane keep this far from both pane edges */
+  --detail-inset: 44px;
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
-  --bg: #f3f3f3;
-  --layer: rgba(255, 255, 255, 0.6);
-  --card: rgba(255, 255, 255, 0.72);
-  --card-stroke: rgba(0, 0, 0, 0.06);
-  --control: rgba(255, 255, 255, 0.72);
-  --control-hover: rgba(249, 249, 249, 0.6);
-  --control-stroke: rgba(0, 0, 0, 0.06);
-  --control-stroke-bottom: rgba(0, 0, 0, 0.16);
-  --subtle-hover: rgba(0, 0, 0, 0.037);
-  --subtle-press: rgba(0, 0, 0, 0.024);
-  --subtle-selected: rgba(0, 0, 0, 0.056);
-  --stroke: rgba(0, 0, 0, 0.08);
-  --divider: rgba(0, 0, 0, 0.06);
+  --paper-bg: #fafaf8;
+  /* the grain laid over the paper (fractal noise, very faint) */
+  --paper: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .1  0 0 0 0 .1  0 0 0 0 .08  0 0 0 .2 -.065'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 
-  --text: rgba(0, 0, 0, 0.9);
-  --text-2: rgba(0, 0, 0, 0.62);
-  --text-3: rgba(0, 0, 0, 0.45);
+  --ink: #141413;
+  --ink-2: #5c5b56;
+  --ink-3: #9a9993;
+  --line: #e6e5e0;
+  --line-2: #d7d6d0;
 
-  --accent: #005fb8;
-  --accent-text: #005fb8;
-  --on-accent: #ffffff;
+  /* input-like things that float over the paper (frosted) */
+  --field: rgba(255, 255, 255, 0.72);
+  /* the quick search panel over other programs */
+  --glass: rgba(250, 250, 248, 0.74);
+  --hover: rgba(20, 20, 19, 0.04);
+  --press: rgba(20, 20, 19, 0.07);
+  --scrim: rgba(20, 20, 19, 0.22);
 
-  --grad-1: #1a73e0;
-  --grad-2: #5b5fe8;
-  --grad-3: #9b4dd6;
-  --on-grad: #ffffff;
-  --wash:
-    radial-gradient(900px 420px at -6% -24%, rgba(26, 115, 224, 0.17), transparent 66%),
-    radial-gradient(760px 380px at 42% -34%, rgba(155, 77, 214, 0.12), transparent 66%);
+  /* the primary button: solid ink, paper-coloured text */
+  --btn: #141413;
+  --btn-hover: #3a3936;
+  --btn-ink: #fafaf8;
 
-  --danger: #c42b1c;
-  --danger-bg: rgba(196, 43, 28, 0.08);
-  --success: #0f7b0f;
+  --danger: #9e3a2f;
 
-  --flyout: rgba(250, 250, 250, 0.97);
-  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.06);
-  --shadow-toast: 0 8px 24px rgba(0, 0, 0, 0.16);
-  --focus-outer: #000000;
-  --focus-inner: #ffffff;
+  --shadow-float: 0 18px 40px -18px rgba(20, 20, 19, 0.3);
+  --shadow-quick: 0 30px 60px -30px rgba(20, 20, 19, 0.32);
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #202020;
-  --layer: rgba(58, 58, 58, 0.32);
-  --card: rgba(255, 255, 255, 0.05);
-  --card-stroke: rgba(0, 0, 0, 0.1);
-  --control: rgba(255, 255, 255, 0.061);
-  --control-hover: rgba(255, 255, 255, 0.084);
-  --control-stroke: rgba(255, 255, 255, 0.07);
-  --control-stroke-bottom: rgba(255, 255, 255, 0.09);
-  --subtle-hover: rgba(255, 255, 255, 0.061);
-  --subtle-press: rgba(255, 255, 255, 0.042);
-  --subtle-selected: rgba(255, 255, 255, 0.084);
-  --stroke: rgba(255, 255, 255, 0.08);
-  --divider: rgba(255, 255, 255, 0.07);
+  --paper-bg: #0d0d0c;
+  --paper: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 .95  0 0 0 .08 -.028'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 
-  --text: #ffffff;
-  --text-2: rgba(255, 255, 255, 0.79);
-  --text-3: rgba(255, 255, 255, 0.55);
+  --ink: #f2f1ec;
+  --ink-2: #b1b0a8;
+  --ink-3: #75746d;
+  --line: #232320;
+  --line-2: #37372f;
 
-  --accent: #60cdff;
-  --accent-text: #99ebff;
-  --on-accent: #000000;
+  --field: rgba(21, 21, 19, 0.72);
+  --glass: rgba(18, 18, 16, 0.72);
+  --hover: rgba(242, 241, 236, 0.045);
+  --press: rgba(242, 241, 236, 0.08);
+  --scrim: rgba(0, 0, 0, 0.55);
 
-  --grad-1: #4cc2ff;
-  --grad-2: #8f8cff;
-  --grad-3: #d48cf0;
-  --on-grad: #0b1020;
-  --wash:
-    radial-gradient(900px 420px at -6% -24%, rgba(76, 194, 255, 0.13), transparent 66%),
-    radial-gradient(760px 380px at 42% -34%, rgba(212, 140, 240, 0.1), transparent 66%);
+  --btn: #f2f1ec;
+  --btn-hover: #d4d3cd;
+  --btn-ink: #0d0d0c;
 
-  --danger: #ff99a4;
-  --danger-bg: rgba(255, 153, 164, 0.1);
-  --success: #6ccb5f;
+  --danger: #d0796d;
 
-  --flyout: rgba(44, 44, 44, 0.97);
-  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08);
-  --shadow-toast: 0 8px 24px rgba(0, 0, 0, 0.4);
-  --focus-outer: #ffffff;
-  --focus-inner: #000000;
-}
-
-:root {
-  --grad: linear-gradient(120deg, var(--grad-1) 0%, var(--grad-2) 55%, var(--grad-3) 100%);
-  --grad-vertical: linear-gradient(180deg, var(--grad-1), var(--grad-3));
+  --shadow-float: 0 18px 40px -18px rgba(0, 0, 0, 0.85);
+  --shadow-quick: 0 30px 60px -30px rgba(0, 0, 0, 0.9);
 }

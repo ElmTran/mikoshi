@@ -6,22 +6,26 @@ import { Keys } from './bits';
 import { Icon } from './Icon';
 import { hotkeyFromEvent, usableHotkey } from '../hotkey';
 
-/**
- * One global hotkey in the settings. Click, then press the keys; Esc cancels,
- * Backspace or Delete turns the hotkey off. The global hotkeys are paused
- * while recording, so the current ones can be pressed too.
- */
-export function HotkeyField({
-  label,
-  value,
-  state,
-  onSave,
-}: {
+interface Props {
   label: string;
   value: string;
-  state: HotkeyState | undefined;
+  /** what registering it with Windows came to (global hotkeys only) */
+  state?: HotkeyState | undefined;
+  /** shows "Restore default" while the value differs from it */
+  defaultValue?: string | undefined;
+  /** a problem with the current value, e.g. used twice */
+  note?: string | null | undefined;
+  /** why `text` cannot be used, or null when it can; global hotkeys by default */
+  validate?: ((text: string) => string | null) | undefined;
   onSave: (text: string) => Promise<void>;
-}) {
+}
+
+/**
+ * One hotkey or shortcut in the settings. Click, then press the keys; Esc
+ * cancels, Backspace turns it off. The global hotkeys are paused while
+ * recording, so the current ones can be pressed too.
+ */
+export function HotkeyField({ label, value, state, defaultValue, note, validate, onSave }: Props) {
   const { t } = usePrefs();
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,13 +34,15 @@ export function HotkeyField({
     recordingRef.current = recording;
   }, [recording]);
 
-  // never leave the hotkeys paused, e.g. when the flyout closes mid-recording
+  // never leave the hotkeys paused, e.g. when the settings close mid-recording
   useEffect(
     () => () => {
       if (recordingRef.current) void api.pauseHotkeys(false).catch(() => {});
     },
     [],
   );
+
+  const check = validate ?? ((text: string) => (usableHotkey(text) ? null : t('error.hotkeyInvalid')));
 
   const start = () => {
     setError(null);
@@ -54,6 +60,7 @@ export function HotkeyField({
       () => setError(null),
       (e: unknown) => setError(t(`error.${e instanceof AppError ? e.code : 'internal'}`)),
     );
+    void api.pauseHotkeys(false).catch(() => {});
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
@@ -62,11 +69,12 @@ export function HotkeyField({
     e.stopPropagation();
     const plain = !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
     if (plain && e.key === 'Escape') return cancel();
-    if (plain && (e.key === 'Backspace' || e.key === 'Delete')) return save('');
+    if (plain && e.key === 'Backspace') return save('');
     const text = hotkeyFromEvent(e);
     if (!text) return;
-    if (!usableHotkey(text)) {
-      setError(t('error.hotkeyInvalid'));
+    const problem = check(text);
+    if (problem) {
+      setError(problem);
       return;
     }
     save(text);
@@ -74,6 +82,7 @@ export function HotkeyField({
 
   const warning =
     error ??
+    note ??
     (state === 'taken'
       ? t('settings.hotkeyTaken')
       : state === 'invalid'
@@ -84,24 +93,36 @@ export function HotkeyField({
     <div className="hotkey-row">
       <div className="select-row">
         <span>{label}</span>
-        <button
-          type="button"
-          className={recording ? 'hotkey-field recording' : 'hotkey-field'}
-          title={t('settings.hotkeyHint')}
-          aria-label={`${label}: ${recording ? t('settings.hotkeyRecording') : value || t('settings.hotkeyOff')}`}
-          onClick={() => (recording ? cancel() : start())}
-          onKeyDown={onKeyDown}
-          onBlur={() => recording && cancel()}
-          {...(recording ? { 'data-own-escape': '' } : {})}
-        >
-          {recording ? (
-            <span className="hotkey-placeholder">{t('settings.hotkeyRecording')}</span>
-          ) : value ? (
-            <Keys keys={value.split('+')} />
-          ) : (
-            <span className="hotkey-placeholder">{t('settings.hotkeyOff')}</span>
+        <span className="hotkey-controls">
+          {defaultValue !== undefined && value !== defaultValue && !recording && (
+            <button
+              type="button"
+              className="link-btn small"
+              title={defaultValue ? defaultValue : t('settings.hotkeyOff')}
+              onClick={() => save(defaultValue)}
+            >
+              {t('settings.restoreDefault')}
+            </button>
           )}
-        </button>
+          <button
+            type="button"
+            className={recording ? 'hotkey-field recording' : 'hotkey-field'}
+            title={t('settings.hotkeyHint')}
+            aria-label={`${label}: ${recording ? t('settings.hotkeyRecording') : value || t('settings.hotkeyOff')}`}
+            onClick={() => (recording ? cancel() : start())}
+            onKeyDown={onKeyDown}
+            onBlur={() => recording && cancel()}
+            {...(recording ? { 'data-own-escape': '' } : {})}
+          >
+            {recording ? (
+              <span className="hotkey-placeholder">{t('settings.hotkeyRecording')}</span>
+            ) : value ? (
+              <Keys keys={value.split('+')} />
+            ) : (
+              <span className="hotkey-placeholder">{t('settings.hotkeyOff')}</span>
+            )}
+          </button>
+        </span>
       </div>
       {warning && (
         <div className="hotkey-warning" role="alert">
