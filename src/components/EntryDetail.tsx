@@ -185,9 +185,9 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
         <div className="detail-actions">
           {inBin ? (
             <>
-              <button className="btn primary" onClick={actions.restore}>
+              <button className="btn primary" title={t('detail.restore')} onClick={actions.restore}>
                 <Icon name="restore" />
-                {t('detail.restore')}
+                <span className="btn-label">{t('detail.restore')}</span>
               </button>
               <button className="btn danger" title={t('menu.deleteForGood')} onClick={actions.deleteForGood}>
                 <Icon name="trash" />
@@ -200,7 +200,7 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
               onClick={actions.autotype}
             >
               <Icon name="keyboard" />
-              {t('detail.autotype')}
+              <span className="btn-label">{t('detail.autotype')}</span>
             </button>
           )}
           <button className="btn" title={t('history.title')} onClick={actions.history}>
@@ -208,7 +208,7 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
           </button>
           <button className="btn" title={withShortcut(t('detail.edit'), sc.editEntry)} onClick={actions.edit}>
             <Icon name="edit" />
-            {t('detail.edit')}
+            <span className="btn-label">{t('detail.edit')}</span>
           </button>
         </div>
       </header>
