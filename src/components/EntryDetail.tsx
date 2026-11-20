@@ -177,7 +177,9 @@ export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) 
       <header className="detail-head">
         <EntryIcon icon={entry.icon} customIcon={entry.customIcon} title={entry.title} size="lg" />
         <div className="detail-titles">
-          <h1 className="detail-title">{entry.title}</h1>
+          <h1 className="detail-title" title={entry.title}>
+            {entry.title}
+          </h1>
           <div className="detail-path">{entry.groupPath.join(' / ')}</div>
         </div>
         <div className="detail-actions">

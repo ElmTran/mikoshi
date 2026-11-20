@@ -530,22 +530,32 @@
   flex-direction: column;
   animation: detail-in var(--t-slow) var(--ease-decelerate);
 }
+/* When the pane is too narrow for the title and the buttons side by side,
+   the buttons go to a second row, under the title. */
 .detail-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 12px 16px;
   padding: 30px var(--detail-inset) 22px;
+  container-type: inline-size;
 }
 .detail-titles {
   flex: 1;
   min-width: 0;
 }
+/* Up to two lines, then an ellipsis; the full title shows on hover. The line
+   height leaves room for the serif's descenders (g, p, y), which a tighter
+   line box cut off. */
 .detail-title {
-  font-size: 32px;
-  line-height: 38px;
+  font-size: 26px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: break-word;
 }
 .detail-path {
   margin-top: 2px;
@@ -555,6 +565,14 @@
 .detail-actions {
   display: flex;
   gap: 8px;
+}
+/* below this the title would get less than about 240px: buttons under it,
+   lined up with the title (icon 50px + gap 16px) */
+@container (max-width: 580px) {
+  .detail-actions {
+    flex-basis: 100%;
+    padding-left: 66px;
+  }
 }
 
 /* buttons are pills: hairline-outlined, or solid ink for the primary one */
@@ -1882,7 +1900,7 @@ div.seg > button.on.danger {
 
 .hv-head .detail-title {
   font-size: 22px;
-  line-height: 28px;
+  line-height: 1.35;
 }
 
 /* ---------------------------------------------------------------- menus, groups, dragging */
