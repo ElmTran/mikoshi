@@ -55,6 +55,7 @@ fn edit_of(v: &Vault, id: &str) -> EntryEdit {
             })
             .collect(),
         totp: TotpEdit::Unchanged,
+        icon: None,
     }
 }
 
@@ -69,6 +70,7 @@ fn new_edit(title: &str) -> EntryEdit {
         expires: None,
         fields: Vec::new(),
         totp: TotpEdit::Unchanged,
+        icon: None,
     }
 }
 
@@ -546,4 +548,177 @@ fn a_failed_save_leaves_no_temporary_file() {
     );
     assert!(!dir.join("gone").join("vault.kdbx.mikoshi-tmp").exists());
     let _ = fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------- M8: organizing
+
+fn group_id(v: &Vault, name: &str) -> String {
+    v.groups()
+        .into_iter()
+        .find(|g| g.name == name)
+        .unwrap_or_else(|| panic!("no group {name}"))
+        .id
+}
+
+fn bin_id(v: &Vault) -> String {
+    v.groups()
+        .into_iter()
+        .find(|g| g.kind == GroupKind::RecycleBin)
+        .expect("a recycle bin")
+        .id
+}
+
+#[test]
+fn deleting_goes_through_the_bin_then_for_good() {
+    let (_dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let id = first_entry(&v);
+    let from = v.entry(&id).unwrap().group_id;
+    assert!(!v.deletes_permanently(std::slice::from_ref(&id), &[]));
+    assert_eq!(
+        v.delete_entries(std::slice::from_ref(&id), "Recycle Bin")
+            .unwrap(),
+        Deleted::ToRecycleBin
+    );
+    let bin = bin_id(&v);
+    assert_eq!(v.entry(&id).unwrap().group_id, bin);
+    assert!(
+        v.search("").iter().all(|e| e.id != id),
+        "the bin is not searched"
+    );
+    assert!(v.is_dirty());
+
+    // back to where it came from
+    v.restore(&id).unwrap();
+    assert_eq!(v.entry(&id).unwrap().group_id, from);
+    assert_eq!(v.restore(&id), Err(EditError::NotAllowed), "not in the bin");
+
+    // in the bin, deleting is for good
+    v.delete_entries(std::slice::from_ref(&id), "Recycle Bin")
+        .unwrap();
+    assert!(v.deletes_permanently(std::slice::from_ref(&id), &[]));
+    assert_eq!(
+        v.delete_entries(std::slice::from_ref(&id), "Recycle Bin")
+            .unwrap(),
+        Deleted::Permanently
+    );
+    assert!(v.entry(&id).is_none());
+
+    v.save(SaveOptions::default()).unwrap();
+    let again = reopened(&v);
+    assert!(again.entry(&id).is_none());
+}
+
+#[test]
+fn groups_are_made_renamed_moved_and_deleted() {
+    let (_dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let general = group_id(&v, "General");
+    let root = v
+        .groups()
+        .into_iter()
+        .find(|g| g.kind == GroupKind::Root)
+        .unwrap()
+        .id;
+    assert_eq!(v.create_group(&general, "  "), Err(EditError::EmptyName));
+    let sub = v.create_group(&general, "Sub").unwrap();
+    v.rename_group(&sub, "Renamed").unwrap();
+    let g = v.groups().into_iter().find(|g| g.id == sub).unwrap();
+    assert_eq!(
+        (g.name.as_str(), g.parent_id.as_deref()),
+        ("Renamed", Some(general.as_str()))
+    );
+
+    // not into itself, not the root, not into the bin
+    assert_eq!(v.move_group(&general, &sub), Err(EditError::NotAllowed));
+    assert_eq!(v.move_group(&root, &general), Err(EditError::NotAllowed));
+    let bin = bin_id(&v);
+    assert_eq!(v.move_group(&sub, &bin), Err(EditError::NotAllowed));
+    assert_eq!(
+        v.delete_group(&root, "Recycle Bin"),
+        Err(EditError::NotAllowed)
+    );
+
+    v.move_group(&sub, &root).unwrap();
+    let id = first_entry(&v);
+    v.move_entries(std::slice::from_ref(&id), &sub).unwrap();
+    assert_eq!(v.entry(&id).unwrap().group_id, sub);
+
+    // a deleted group goes to the bin with its entries, and comes back
+    assert_eq!(
+        v.delete_group(&sub, "Recycle Bin").unwrap(),
+        Deleted::ToRecycleBin
+    );
+    let g = v.groups().into_iter().find(|g| g.id == sub).unwrap();
+    assert_eq!(g.parent_id.as_deref(), Some(bin.as_str()));
+    assert!(v.search("").iter().all(|e| e.id != id));
+    v.restore(&sub).unwrap();
+    let g = v.groups().into_iter().find(|g| g.id == sub).unwrap();
+    assert_eq!(g.parent_id.as_deref(), Some(root.as_str()));
+    assert!(v.search("").iter().any(|e| e.id == id));
+
+    // emptying the bin
+    v.delete_group(&sub, "Recycle Bin").unwrap();
+    assert!(v.empty_recycle_bin().unwrap() >= 1);
+    assert!(v.groups().iter().all(|g| g.id != sub));
+    assert!(v.entry(&id).is_none());
+    assert_eq!(v.empty_recycle_bin().unwrap(), 0);
+}
+
+#[test]
+fn attachments_are_added_exported_and_removed() {
+    let (_dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let id = first_entry(&v);
+    let n = v.history(&id).unwrap().len();
+    let name = v.add_attachment(&id, "note.txt", b"hello").unwrap();
+    assert_eq!(name, "note.txt");
+    let again = v.add_attachment(&id, "note.txt", b"second").unwrap();
+    assert_eq!(again, "note (2).txt");
+    assert_eq!(v.attachment(&id, "note.txt").unwrap().as_slice(), b"hello");
+    assert_eq!(
+        v.history(&id).unwrap().len(),
+        n + 2,
+        "each change keeps the old version"
+    );
+
+    v.remove_attachment(&id, "note.txt").unwrap();
+    assert!(v.attachment(&id, "note.txt").is_none());
+    assert_eq!(
+        v.remove_attachment(&id, "note.txt"),
+        Err(EditError::NotFound)
+    );
+    assert_eq!(
+        v.attachment(&id, "note (2).txt").unwrap().as_slice(),
+        b"second"
+    );
+
+    v.save(SaveOptions::default()).unwrap();
+    let r = reopened(&v);
+    let names: Vec<String> = r
+        .entry(&id)
+        .unwrap()
+        .attachments
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    assert!(names.contains(&"note (2).txt".to_string()));
+    assert!(!names.contains(&"note.txt".to_string()));
+}
+
+#[test]
+fn a_standard_icon_can_be_picked() {
+    let (_dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let id = v
+        .search("Custom Icon")
+        .into_iter()
+        .find(|e| e.custom_icon.is_some())
+        .unwrap()
+        .id;
+    let mut e = edit_of(&v, &id);
+    e.icon = Some(5);
+    assert!(v.update_entry(&id, &e).unwrap());
+    let d = v.entry(&id).unwrap();
+    assert_eq!((d.icon, d.custom_icon), (5, None));
+    // the same icon again changes nothing
+    let mut e = edit_of(&v, &id);
+    e.icon = Some(5);
+    assert!(!v.update_entry(&id, &e).unwrap());
 }

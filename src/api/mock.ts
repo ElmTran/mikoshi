@@ -157,6 +157,8 @@ function editable(e: DemoEntry): EditableEntry {
     expires: e.expires ?? null,
     fields: (e.fields ?? []).map((f) => ({ ...f })),
     totp: e.otp ? { valid: true, algorithm: 'SHA1', digits: 6, period: 30, steam: false } : null,
+    icon: ICONS[e.id] ?? 0,
+    customIcon: null,
   };
 }
 

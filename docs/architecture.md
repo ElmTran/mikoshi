@@ -68,6 +68,20 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 | `save_database` | 写回文件；`options.force` 覆盖外部修改，`options.upgrade` 同意变成 4.1 | ✓ | |
 | `reload_database` | 重新读文件，丢掉未保存的修改 | ✓ | |
 | `quit_app` | 从主窗口退出（托盘退出走的也是这个）；`discard` 表示不要未保存的修改 | ✓ | |
+| `deletes_permanently` | 删除这些条目/分组是不是永久的（在回收站里，或者库关了回收站）；是的话前端先确认 | ✓ | |
+| `delete_entries` / `delete_group` | 删除：进回收站（没有就新建，名字由前端按语言给），或者在回收站里永久删除 | ✓ | |
+| `restore_item` | 把条目或分组从回收站移回原处（原分组没了就回根分组） | ✓ | |
+| `empty_recycle_bin` | 清空回收站 | ✓ | |
+| `create_group` / `rename_group` / `move_group` | 分组的新建、改名、移动（不能移进自己或自己的子分组，也不能移进回收站） | ✓ | |
+| `move_entries` | 把条目移到另一个分组 | ✓ | |
+| `export_attachment` | 弹出保存对话框，Rust 端直接把附件写到选的文件，内容不经过前端 | ✓ | |
+| `add_attachment` / `remove_attachment` | 加附件（打开对话框选文件，最大 256 MB）、删附件；都会先存历史版本 | ✓ | |
+| `choose_new_database` | 新库的保存对话框；已经存在的文件一律拒绝（`fileExists`） | ✓ | |
+| `create_key_file` | 在选的位置新生成一个 XML 2.0 密钥文件，只返回路径 | ✓ | |
+| `create_database` | 新建库：校准 KDF、写文件、直接打开 | ✓ | |
+| `generate_password` | 按选项生成密码或口令短语，返回结果、熵和强度；记住选项（不记结果） | ✓ | |
+| `password_strength` | zxcvbn 强度估算（编辑器和新建库的强度条） | ✓ | |
+| `copy_secret` | 把界面上已经显示的值（生成的密码）按秘密复制：不进剪贴板历史，定时清除 | ✓ | |
 | `copy_field` | 复制一个字段或当前验证码（`@totp`），见"剪贴板" | ✓ | ✓ |
 | `get_totp` | 当前验证码和剩余秒数 | ✓ | |
 | `open_url` | 用默认浏览器打开条目的网址（只限 http 和 https） | ✓ | |
@@ -100,7 +114,7 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 命令失败时只返回一个错误码，例如 `{"code": "locked"}`，前端按当前语言显示对应的文案（`error.locked` 等）。错误里**不带任何用户数据**，所以可以放心写进日志或显示出来。错误码定义在 `src-tauri/src/error.rs`，前端的对应类型在 `src/api/types.ts`。
 
-解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`fieldName`（自定义字段名不能为空、重复或占用标准/验证码字段名）、`expiry`（过期时间无法识别）、`unsavedChanges`（有未保存的修改，等用户决定）、`saveConflict`（文件被别处改过）、`saveFailed`（写不了文件或加密后读不回来）、`formatUpgrade`（保存会变成 KDBX 4.1，等用户同意）、`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
+解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`fieldName`（自定义字段名不能为空、重复或占用标准/验证码字段名）、`expiry`（过期时间无法识别）、`unsavedChanges`（有未保存的修改，等用户决定）、`saveConflict`（文件被别处改过）、`saveFailed`（写不了文件或加密后读不回来）、`formatUpgrade`（保存会变成 KDBX 4.1，等用户同意）、`notAllowed`（这个操作不能用在这里，比如删除根分组）、`emptyName`（名字为空）、`fileExists`（新库或密钥文件的位置已经有文件）、`writeFailed`（文件写不进去）、`tooLarge`（附件超过 256 MB）、`noCharacters`（生成器一种字符都没选）、`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
 
 ### 编辑与保存（M7）
 
@@ -116,6 +130,19 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 - 文件是 3.1 或 4.0 时，第一次保存前要 `upgrade: true`，前端弹框说明会变成 4.1
 - 锁定、退出、切换库时有未保存的修改：设置是 `save` 就直接保存；是 `ask` 时手动锁定/退出先弹框（保存 / 不保存 / 取消），自动锁定没人回答，照样保存。任何一条自动保存路径碰到 `saveConflict` 都不覆盖原文件，而是把这一版写成 `名字.mikoshi-conflict-<时间>.kdbx`（同一个密钥），并发 `save-conflict-copy` 让主窗口提示
 - 重新加载（`reload_database`）丢掉内存里的修改，用同一个密钥重读文件
+
+### 回收站、分组和附件（M8）
+
+- `crates/kdbx/src/ops.rs`：没有回收站时第一次删除自动建（图标 43，关搜索和自动输入，写进 `Meta/RecycleBinUUID`）；分组改名、移动（记 `PreviousParentGroup` 和 `LocationChanged`）；永久删除条目和分组，每个都记进 `Root/DeletedObjects`；删附件。附件池里没人引用的项会被移除，后面的引用编号跟着改
+- `crates/mikoshi-core/src/vault/organize.rs`：回收站外删除是移进回收站，回收站里删除或库关了回收站是永久删除；移回原处看 `PreviousParentGroup`；加删附件和应用一次编辑一样先存历史
+- 界面：`Delete` 删除（焦点在分组树时删分组），右键菜单（条目：编辑、移动到、删除；分组：在这里新建条目、新建子分组、重命名、移动到、删除；回收站：清空），条目和分组能拖到分组上，拖到回收站上就是删除。主窗口关掉了 Tauri 自己的文件拖放（`dragDropEnabled: false`），否则 WebView2 里网页的拖放事件收不到
+
+### 新建库和密码生成器（M8）
+
+- 新建库（`crates/kdbx/src/create.rs`、`crates/mikoshi-core/src/vault/create.rs`）：KDBX 4.1，AES-256，gzip，Argon2id 64 MiB、并行度等于 CPU 核数，迭代次数按本机校准到约 1 秒（量 2 次和 10 次两点，拟合固定开销和每次的开销，只量一次会把固定开销算进每次里、偏少）。只写到还不存在的文件
+- 密钥文件：32 字节随机数，KeePass 2.47+ / KeePassXC 的 XML 2.0 格式，带 SHA-256 前 4 字节的校验
+- 生成器（`crates/mikoshi-core/src/generator.rs`）：系统随机源，拒绝采样避免取模偏差，每种选中的字符至少一个再打乱；口令短语用 EFF 大词表（7776 个词，CC BY 3.0，`eff_large_wordlist.txt` 原样放在源码里）。强度用 Rust 的 `zxcvbn` crate，词典不进前端
+- 编辑器密码栏右边的钥匙按钮打开生成器，`Ctrl+G` 单独打开、只复制
 
 ### 剪贴板
 
@@ -228,6 +255,7 @@ M6 起替代 keepass-rs。原则是**读进来什么就写回什么，只改动�
   - `idleLockMinutes`：全局无操作多少分钟后锁定，默认 5，0 表示不锁定
   - `lockOnMinimize`：主窗口最小化时锁定，默认关
   - `backupOnSave`：保存前把上一版留成 `名字.bak`，默认开
+  - `generator`：密码生成器上次的选项（模式、长度、字符类、词数、分隔符等），不存生成的密码
   - `lockUnsaved`：有未保存的修改时锁定怎么办，`save`（默认，直接保存）或 `ask`（手动锁定先问；空闲、锁屏、睡眠这类自动锁定照样保存）
   - `quickSearchHotkey`、`lockHotkey`：全局热键，默认 `Ctrl+Alt+K`、`Ctrl+Alt+L`，空字符串表示关闭
 - `recent` 由 Rust 端维护：解锁成功时更新，`forget_recent` 删除。`set_settings` 收到的 `recent` 会被忽略，免得某个窗口拿着旧列表把新列表覆盖掉
@@ -299,6 +327,33 @@ pnpm check
 依次是：装依赖；启动程序（改代码后自动刷新）；跑全部检查（类型、ESLint、clippy、格式、测试）。
 
 只改界面时也可以运行 `pnpm dev`，然后用浏览器打开 `http://127.0.0.1:1420`。这时没有 Rust 端，`src/api/mock.ts` 用 `src/api/mock-vault.json` 里的演示数据顶替（任意密码都能解锁，打开文件对话框会直接选中演示库）；它只在开发模式下存在，不会进正式构建。浏览器里没有云母背景，窗口按钮也不起作用。
+
+### 不打扰桌面的测试
+
+测试时 Mikoshi 的窗口不能出现在正在用电脑的人面前，不能抢焦点，也不能让 Windows 把屏幕切到别的桌面。办法是把测试窗口放到一个专门的 Windows 虚拟桌面上，平时没人看它：
+
+1. 一次性准备：在任务视图（`Win+Tab`）里新建一个桌面，改名为"Mikoshi 测试"，一直留着。开发用的终端放在哪个桌面都行
+2. 后台启动 Vite：`pnpm exec vite`
+3. `pwsh tools/run-off-desktop.ps1` 启动 debug 构建。脚本从注册表（`HKCU\...\Explorer\VirtualDesktops`）按名字找到这个桌面；找不到、或者它正是眼前这个桌面时，不启动。`-DryRun` 只打印会用哪个桌面
+4. 用 `tools/cdp.mjs` 操作和截图；`tools/desktop-of.ps1` 能查看每个窗口在哪个桌面
+
+新建桌面不由脚本来做：公开的接口不能新建桌面，`Win+Ctrl+D` 会把用户的屏幕一起切过去，能悄悄新建的内部接口没有文档，每个 Windows 版本都可能变。
+
+开发构建认环境变量 `MIKOSHI_DEV_DESKTOP`（`windows::dev_quiet()`），这时：
+
+- **窗口由 Mikoshi 自己搬到那个桌面**：建好时搬一次，每次显示前再搬一次。Windows 只允许程序移动自己的窗口，从外面搬会被拒绝
+- **快速搜索框临时有任务栏按钮**：没有任务栏按钮的窗口不属于任何虚拟桌面，会出现在用户正在看的桌面上
+- **从不激活窗口**：不调 `set_focus`。tao 的 `set_focus` 会模拟按一下 Alt 键来绕过前台锁，这一下 Alt 会按进用户正在用的程序，而且能把屏幕切走。建窗口时也不拿焦点（`focused(false)`）
+- **不注册全局热键，不自动输入**：否则用户按 `Ctrl+Alt+V` 时，测试实例会往用户的窗口里打字
+
+`run-off-desktop.ps1` 另外做两件事：
+
+- **经计划任务和隐藏的脚本宿主启动**，不是终端的子进程。终端正是用户正在打字的前台进程，它启动的程序有权抢前台，连普通的显示窗口（`ShowWindow(SW_SHOW)`）都会把屏幕切过去。换了父进程就没有这个权利
+- **给 WebView2 加参数**：`--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows`，窗口所在的桌面没人看时照样渲染，截图才是最新的；同时开调试端口给 `cdp.mjs`
+
+这些代码都在 `#[cfg(debug_assertions)]` 里，release 构建没有。
+
+2026-11-20 逐项实测了 8 轮：只要少了"不调 `set_focus`""计划任务启动""快速搜索框进任务栏"中的任何一项，都会把窗口弄到用户面前或者切走屏幕；`focused(false)` 在有计划任务时不是必需的，留作保险。
 
 ### 不动鼠标键盘检查真实窗口
 

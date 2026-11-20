@@ -111,6 +111,7 @@ async function connect(label) {
 const KEYS = {
   Enter: { code: 'Enter', vk: 13, text: '\r' },
   Escape: { code: 'Escape', vk: 27 },
+  Delete: { code: 'Delete', vk: 46 },
   Tab: { code: 'Tab', vk: 9 },
   ArrowUp: { code: 'ArrowUp', vk: 38 },
   ArrowDown: { code: 'ArrowDown', vk: 40 },

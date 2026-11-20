@@ -4,8 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 
+use mikoshi_core::generator::{self, GeneratorOptions, Strength};
 use mikoshi_core::model::{CustomIconView, EntryDetail, EntrySummary, GroupView, TotpView};
 use mikoshi_core::totp::TotpError;
+use mikoshi_core::vault::Deleted;
 use mikoshi_core::vault::{
     EditError, EditableEntry, EntryEdit, HistoryItem, SaveError, SaveOptions,
 };
@@ -743,6 +745,344 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> AppResult<bool> {
         AppError::Autostart
     })?;
     get_autostart(app)
+}
+
+// ---------------------------------------------------------------- M8: organizing
+
+/// Shows the native "save as" dialog. Must not run on the main thread.
+async fn pick_save_path(
+    app: AppHandle,
+    window: tauri::Window,
+    text: DialogText,
+    extensions: &'static [&'static str],
+    file_name: Option<String>,
+    start: Option<PathBuf>,
+) -> AppResult<Option<PathBuf>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title(text.title);
+        if !extensions.is_empty() {
+            dialog = dialog.add_filter(text.filter, extensions);
+        }
+        dialog = dialog.add_filter(text.all_files, &["*"]);
+        if let Some(name) = file_name {
+            dialog = dialog.set_file_name(name);
+        }
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        dialog.blocking_save_file().and_then(|f| f.into_path().ok())
+    })
+    .await
+    .map_err(|_| AppError::Internal)
+}
+
+/// Whether deleting these removes them for good (in the recycle bin, or the
+/// bin is turned off): the UI asks first.
+#[tauri::command]
+pub fn deletes_permanently(
+    state: State<'_, AppState>,
+    entry_ids: Vec<String>,
+    group_ids: Vec<String>,
+) -> AppResult<bool> {
+    read(&state, |v| {
+        Some(v.deletes_permanently(&entry_ids, &group_ids))
+    })
+}
+
+/// Deletes entries: into the recycle bin, or for good from inside it.
+/// `bin_name` names the bin when it has to be made (in the UI's language).
+#[tauri::command]
+pub fn delete_entries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_ids: Vec<String>,
+    bin_name: String,
+) -> AppResult<Deleted> {
+    edit_vault(&app, &state, |v| v.delete_entries(&entry_ids, &bin_name))
+}
+
+#[tauri::command]
+pub fn delete_group(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    group_id: String,
+    bin_name: String,
+) -> AppResult<Deleted> {
+    edit_vault(&app, &state, |v| v.delete_group(&group_id, &bin_name))
+}
+
+/// Takes an entry or group out of the recycle bin.
+#[tauri::command]
+pub fn restore_item(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    edit_vault(&app, &state, |v| v.restore(&id))
+}
+
+#[tauri::command]
+pub fn empty_recycle_bin(app: AppHandle, state: State<'_, AppState>) -> AppResult<usize> {
+    edit_vault(&app, &state, Vault::empty_recycle_bin)
+}
+
+#[tauri::command]
+pub fn create_group(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    parent_id: String,
+    name: String,
+) -> AppResult<String> {
+    edit_vault(&app, &state, |v| v.create_group(&parent_id, &name))
+}
+
+#[tauri::command]
+pub fn rename_group(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    group_id: String,
+    name: String,
+) -> AppResult<()> {
+    edit_vault(&app, &state, |v| v.rename_group(&group_id, &name))
+}
+
+#[tauri::command]
+pub fn move_group(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    group_id: String,
+    to: String,
+) -> AppResult<()> {
+    edit_vault(&app, &state, |v| v.move_group(&group_id, &to))
+}
+
+#[tauri::command]
+pub fn move_entries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_ids: Vec<String>,
+    to: String,
+) -> AppResult<()> {
+    edit_vault(&app, &state, |v| v.move_entries(&entry_ids, &to))
+}
+
+// ---------------------------------------------------------------- attachments
+
+/// Attachments larger than this are refused: the whole database lives in
+/// memory, and so does every version of it in the history.
+const MAX_ATTACHMENT: u64 = 256 * 1024 * 1024;
+
+/// Saves an attachment to a file the user picks. The bytes go from the
+/// database straight to the file, never through the UI. `false` when the
+/// dialog was cancelled.
+#[tauri::command]
+pub async fn export_attachment(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    entry_id: String,
+    name: String,
+    text: DialogText,
+) -> AppResult<bool> {
+    // fail early (locked, no such attachment) before showing a dialog
+    read(&state, |v| v.attachment(&entry_id, &name).map(|_| ()))?;
+    let Some(path) = pick_save_path(app, window, text, &[], Some(name.clone()), None).await? else {
+        return Ok(false);
+    };
+    let data = read(&state, |v| v.attachment(&entry_id, &name))?;
+    std::fs::write(&path, &data[..]).map_err(|_| {
+        log::warn!("an attachment could not be written to the chosen file");
+        AppError::WriteFailed
+    })?;
+    Ok(true)
+}
+
+/// Attaches a file the user picks; returns the name it got (a taken name
+/// gets a number), or `None` when the dialog was cancelled.
+#[tauri::command]
+pub async fn add_attachment(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    entry_id: String,
+    text: DialogText,
+) -> AppResult<Option<String>> {
+    read(&state, |v| v.entry(&entry_id).map(|_| ()))?;
+    let Some(path) = pick_file(app.clone(), window, text, &["*"], None).await? else {
+        return Ok(None);
+    };
+    let size = std::fs::metadata(&path)
+        .map_err(|_| AppError::FileUnreadable)?
+        .len();
+    if size > MAX_ATTACHMENT {
+        return Err(AppError::TooLarge);
+    }
+    let data = zeroize::Zeroizing::new(std::fs::read(&path).map_err(|_| AppError::FileUnreadable)?);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "attachment".into());
+    edit_vault(&app, &state, |v| v.add_attachment(&entry_id, &name, &data)).map(Some)
+}
+
+#[tauri::command]
+pub fn remove_attachment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+    name: String,
+) -> AppResult<()> {
+    edit_vault(&app, &state, |v| v.remove_attachment(&entry_id, &name))
+}
+
+// ---------------------------------------------------------------- new databases
+
+/// Picks where a new database goes. `None` when cancelled.
+#[tauri::command]
+pub async fn choose_new_database(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    text: DialogText,
+    file_name: String,
+) -> AppResult<Option<String>> {
+    let start = folder_of(session(&state)?.current.as_deref());
+    let picked = pick_save_path(app, window, text, &["kdbx"], Some(file_name), start).await?;
+    match picked {
+        // a new database never replaces a file, even one the dialog agreed to
+        Some(p) if p.exists() => Err(AppError::FileExists),
+        Some(p) => Ok(Some(p.to_string_lossy().into_owned())),
+        None => Ok(None),
+    }
+}
+
+/// Makes a new key file where the user picks; returns its path, or `None`
+/// when cancelled. Only the path comes back.
+#[tauri::command]
+pub async fn create_key_file(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    text: DialogText,
+    file_name: String,
+) -> AppResult<Option<String>> {
+    let start = folder_of(session(&state)?.current.as_deref());
+    let Some(path) = pick_save_path(app, window, text, &["keyx"], Some(file_name), start).await?
+    else {
+        return Ok(None);
+    };
+    mikoshi_core::vault::create_key_file(&path)?;
+    log::info!("new key file written");
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// Makes a new database at `path` (from `choose_new_database`), calibrates
+/// its KDF to about a second here, writes it, and opens it. Whatever was
+/// open is locked first (unsaved edits are saved, as when switching).
+#[tauri::command]
+pub async fn create_database(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    name: String,
+    password: Option<Secret>,
+    key_file: Option<String>,
+) -> AppResult<VaultStatus> {
+    let key_file = key_file.filter(|k| !k.trim().is_empty());
+    let (file, kf) = (PathBuf::from(&path), key_file.clone());
+    let vault = tauri::async_runtime::spawn_blocking(move || {
+        let settings = mikoshi_core::vault::calibrated_settings()?;
+        Vault::create(mikoshi_core::vault::NewDatabase {
+            path: &file,
+            name: &name,
+            password: password.as_ref(),
+            key_file: kf.as_deref().map(Path::new),
+            settings,
+        })
+    })
+    .await
+    .map_err(|_| AppError::Internal)?
+    .map_err(|e| {
+        log::info!("new database not made: {e:?}");
+        AppError::from(e)
+    })?;
+    log::info!("new database made");
+
+    session::leave(&app, false);
+    {
+        let mut s = session(&state)?;
+        s.lock();
+        s.current = Some(PathBuf::from(&path));
+        s.open = Some(vault);
+    }
+    let saved = settings(&state)?.update(|s| s.note_opened(&path, key_file.as_deref()));
+    if let Ok(s) = saved {
+        let _ = app.emit("settings-changed", &s);
+    }
+    announce(&app, &state)
+}
+
+// ---------------------------------------------------------------- generator
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedView {
+    /// sent to the UI on purpose: it goes into the password field, or is
+    /// shown so the user can copy it
+    pub password: String,
+    pub bits: f64,
+    pub strength: Strength,
+}
+
+/// Generates a password and remembers the options (not the password).
+#[tauri::command]
+pub fn generate_password(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    options: GeneratorOptions,
+) -> AppResult<GeneratedView> {
+    let options = options.clamped();
+    let g = generator::generate(&options).map_err(|_| AppError::NoCharacters)?;
+    let changed = settings(&state)?.current.generator != options;
+    if changed {
+        // the lock must be released before emitting: the tray listens for
+        // `settings-changed` on this thread and reads the settings itself
+        let saved = settings(&state)?.update(|s| s.generator = options.clone());
+        match saved {
+            Ok(s) => {
+                let _ = app.emit("settings-changed", &s);
+            }
+            Err(e) => log::warn!("generator options not saved: {e}"),
+        }
+    }
+    Ok(GeneratedView {
+        strength: generator::strength(g.password.expose()),
+        password: g.password.expose().to_string(),
+        bits: g.bits,
+    })
+}
+
+/// How strong a password is (zxcvbn), for the editor's meter.
+#[tauri::command]
+pub fn password_strength(password: Secret) -> Strength {
+    generator::strength(password.expose())
+}
+
+/// Copies a value the UI already shows (a generated password) as a secret:
+/// kept out of clipboard history and cleared after the usual time.
+#[tauri::command]
+pub fn copy_secret(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    value: Secret,
+) -> AppResult<CopyResult> {
+    if value.is_empty() {
+        return Err(AppError::NotFound);
+    }
+    let seconds = settings(&state)?.current.clipboard_clear_seconds;
+    let clears_after = (seconds > 0).then_some(seconds);
+    clipboard::copy(&app, &value, true, clears_after)?;
+    Ok(CopyResult { clears_after })
 }
 
 #[cfg(test)]

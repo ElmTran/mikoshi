@@ -86,6 +86,9 @@ pub fn plan(
     sequence: &str,
     target: isize,
 ) -> Result<Plan, TypeError> {
+    if crate::windows::dev_quiet() {
+        return Err(TypeError::NoWindow);
+    }
     let steps = autotype::parse(sequence).map_err(sequence_error)?;
     let mut actions = Vec::with_capacity(steps.len());
     for step in steps {

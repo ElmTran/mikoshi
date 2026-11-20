@@ -32,8 +32,12 @@ pub enum EditError {
     TotpInvalid,
     /// the expiry time cannot be read
     Expiry,
-    /// new entries do not go into the recycle bin
+    /// new entries and groups do not go into the recycle bin
     RecycleBin,
+    /// not possible for this item (the root group, a group into itself, ...)
+    NotAllowed,
+    /// a group or attachment name that is empty
+    EmptyName,
 }
 
 // ---------------------------------------------------------------- to the editor
@@ -56,6 +60,10 @@ pub struct EditableEntry {
     pub fields: Vec<EditableField>,
     /// the TOTP settings, without the secret
     pub totp: Option<TotpSummary>,
+    /// KeePass standard icon, 0–68
+    pub icon: u32,
+    /// custom icon id, shown instead of `icon`
+    pub custom_icon: Option<String>,
 }
 
 impl std::fmt::Debug for EditableEntry {
@@ -118,6 +126,9 @@ pub struct EntryEdit {
     pub fields: Vec<FieldEdit>,
     #[serde(default)]
     pub totp: TotpEdit,
+    /// a KeePass standard icon, 0–68; `None` leaves the icon as it is
+    #[serde(default)]
+    pub icon: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -268,6 +279,17 @@ fn set_if_changed(e: &mut EntryMut<'_>, key: &str, value: &str, protected: bool)
 /// the entry does not have yet is protected.
 fn apply(e: &mut EntryMut<'_>, c: &Checked<'_>, protect: &dyn Fn(&str) -> bool) {
     let edit = c.edit;
+    if let Some(icon) = edit.icon.filter(|i| *i < 69) {
+        let el = e.element();
+        let same = el
+            .child_text("IconID")
+            .and_then(|t| t.trim().parse::<u32>().ok())
+            == Some(icon)
+            && el.child("CustomIconUUID").is_none();
+        if !same {
+            e.set_icon(icon);
+        }
+    }
     let existing = string_fields(e.element());
     let protected_now = |k: &str| existing.iter().find(|(x, _)| x == k).map(|(_, p)| *p);
 
@@ -429,7 +451,10 @@ impl Vault {
                 steam: false,
             },
         });
+        let (icon, custom_icon) = super::icon_of(e.icon_id(), e.custom_icon(), super::ICON_KEY);
         Some(EditableEntry {
+            icon,
+            custom_icon,
             id: id.to_string(),
             group_id: self.groups[group].key.clone(),
             title: f.text(fields::TITLE),

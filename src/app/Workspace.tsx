@@ -7,15 +7,19 @@ import {
   type EntryDetail as Detail,
   type EntryEdit,
   type EntrySort,
+  type DialogText,
   type EntrySummary,
   type GroupView,
   type VaultStatus,
 } from '../api/types';
+import { ContextMenu, type MenuEntry } from '../components/ContextMenu';
 import { Dialog } from '../components/Dialog';
+import { GeneratorPanel } from '../components/Generator';
+import { MoveDialog } from '../components/MoveDialog';
 import { EntryDetail, type DetailActions } from '../components/EntryDetail';
 import { EntryEditor } from '../components/EntryEditor';
 import { EntryList } from '../components/EntryList';
-import { GroupNav } from '../components/GroupNav';
+import { GroupNav, type Dragged } from '../components/GroupNav';
 import { HistoryDialog } from '../components/HistoryDialog';
 import { Icon } from '../components/Icon';
 import { Keys } from '../components/bits';
@@ -72,6 +76,14 @@ export function Workspace({ status }: { status: VaultStatus }) {
   const [version, setVersion] = useState(0);
   // what to do once a save that needed a dialog went through
   const afterSave = useRef<'lock' | 'quit' | null>(null);
+  // M8: menus, moving, confirming, renaming, dragging
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
+  const [moving, setMoving] = useState<Dragged | null>(null);
+  const [confirm, setConfirm] = useState<{ message: string; run: () => void } | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const dragged = useRef<Dragged | null>(null);
+  const firstGroups = useRef(true);
   const search = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLElement | null>(null);
@@ -108,10 +120,19 @@ export function Workspace({ status }: { status: VaultStatus }) {
   useEffect(() => {
     api.listGroups().then((gs) => {
       setGroups(gs);
-      setCollapsed(initiallyCollapsed(gs));
-      setGroupId((cur) => cur ?? gs.find((g) => g.kind === 'root')?.id ?? gs[0]?.id ?? null);
+      // the file's expanded state counts once; after that the user's own
+      if (firstGroups.current) {
+        firstGroups.current = false;
+        setCollapsed(initiallyCollapsed(gs));
+      }
+      // a group that went away (deleted, emptied from the bin) hands over to the root
+      setGroupId((cur) =>
+        cur && gs.some((g) => g.id === cur)
+          ? cur
+          : (gs.find((g) => g.kind === 'root')?.id ?? gs[0]?.id ?? null),
+      );
     }, fail);
-  }, [fail]);
+  }, [fail, version]);
 
   /**
    * A new list keeps the selected entry if it is in it. Otherwise the first
@@ -194,6 +215,257 @@ export function Workspace({ status }: { status: VaultStatus }) {
 
   const toggle = useCallback((id: string) => setOpen(id, collapsed.has(id)), [collapsed, setOpen]);
 
+  const startEdit = useCallback(() => {
+    if (!detail) return;
+    api.getEntryForEdit(detail.id).then((entry) => setMode({ kind: 'edit', entry }), fail);
+  }, [detail, fail]);
+  // the detail actions are created before this; they call through a ref
+  const startEditRef = useRef(startEdit);
+  useEffect(() => {
+    startEditRef.current = startEdit;
+  }, [startEdit]);
+
+  // ------------------------------------------------------------ deleting, groups, attachments (M8)
+
+  const refresh = useCallback(() => setVersion((v) => v + 1), []);
+
+  /** Whether a group is the recycle bin or inside it. */
+  const inBin = useCallback(
+    (id: string | null) => {
+      for (let g = id ? byId.get(id) : undefined; g; g = g.parentId ? byId.get(g.parentId) : undefined) {
+        if (g.kind === 'recycleBin') return true;
+      }
+      return false;
+    },
+    [byId],
+  );
+  const binId = useMemo(() => groups.find((g) => g.kind === 'recycleBin')?.id ?? null, [groups]);
+
+  const announceDeleted = useCallback(
+    (how: 'toRecycleBin' | 'permanently') => {
+      toast({ message: t(how === 'toRecycleBin' ? 'delete.toBin' : 'delete.gone') });
+      refresh();
+    },
+    [refresh, t, toast],
+  );
+
+  /** Deletes entries: into the bin at once, or for good after asking. */
+  const deleteEntries = useCallback(
+    (ids: string[], name: string) => {
+      const run = () => api.deleteEntries(ids, t('binName')).then(announceDeleted, fail);
+      api.deletesPermanently(ids, []).then((forGood) => {
+        if (forGood) setConfirm({ message: t('delete.confirmEntry', { name }), run });
+        else void run();
+      }, fail);
+    },
+    [announceDeleted, fail, t],
+  );
+
+  const deleteGroup = useCallback(
+    (g: GroupView) => {
+      if (g.kind === 'root') return;
+      const run = () => api.deleteGroup(g.id, t('binName')).then(announceDeleted, fail);
+      api.deletesPermanently([], [g.id]).then((forGood) => {
+        if (forGood) setConfirm({ message: t('delete.confirmGroup', { name: g.name }), run });
+        else void run();
+      }, fail);
+    },
+    [announceDeleted, fail, t],
+  );
+
+  const restore = useCallback(
+    (id: string) =>
+      api.restoreItem(id).then(() => {
+        toast({ message: t('delete.restored') });
+        refresh();
+      }, fail),
+    [fail, refresh, t, toast],
+  );
+
+  const emptyBin = useCallback(
+    () =>
+      setConfirm({
+        message: t('delete.confirmEmpty'),
+        run: () =>
+          api.emptyRecycleBin().then(() => {
+            toast({ message: t('delete.emptied') });
+            refresh();
+          }, fail),
+      }),
+    [fail, refresh, t, toast],
+  );
+
+  /** A new subgroup named "New group", straight into renaming it. */
+  const newSubgroup = useCallback(
+    (parent: GroupView) =>
+      api.createGroup(parent.id, t('group.newName')).then((id) => {
+        setCollapsed((cur) => {
+          const next = new Set(cur);
+          next.delete(parent.id);
+          return next;
+        });
+        refresh();
+        setQuery('');
+        setGroupId(id);
+        setRenaming(id);
+      }, fail),
+    [fail, refresh, t],
+  );
+
+  const renamed = useCallback(
+    (id: string, name: string | null) => {
+      setRenaming(null);
+      const g = byId.get(id);
+      if (name === null || !g || name.trim() === g.name) return;
+      api.renameGroup(id, name).then(refresh, fail);
+    },
+    [byId, fail, refresh],
+  );
+
+  const moveTo = useCallback(
+    (what: Dragged, to: string) => {
+      const done = () => {
+        toast({ message: t('move.done') });
+        refresh();
+      };
+      if (what.kind === 'entry') api.moveEntries(what.ids, to).then(done, fail);
+      else api.moveGroup(what.id, to).then(done, fail);
+    },
+    [fail, refresh, t, toast],
+  );
+
+  /**
+   * What may be dropped where: not into itself or below itself, nothing into
+   * the bin's insides, and dropping on the bin itself is deleting.
+   */
+  const canDrop = useCallback(
+    (target: GroupView) => {
+      const d = dragged.current;
+      if (!d) return false;
+      if (inBin(target.id) && target.kind !== 'recycleBin') return false;
+      if (d.kind === 'group') {
+        if (d.id === target.id || isInside(target.id, d.id)) return false;
+        if (target.kind === 'recycleBin') return !inBin(d.id);
+        return true;
+      }
+      const from = list.find((e) => e.id === d.ids[0])?.groupId ?? null;
+      if (target.kind === 'recycleBin') return !inBin(from);
+      return from !== target.id;
+    },
+    [inBin, isInside, list],
+  );
+
+  const dropOn = useCallback(
+    (target: GroupView) => {
+      const d = dragged.current;
+      dragged.current = null;
+      if (!d) return;
+      if (target.kind === 'recycleBin') {
+        if (d.kind === 'group') {
+          const g = byId.get(d.id);
+          if (g) deleteGroup(g);
+        } else {
+          const e = list.find((x) => x.id === d.ids[0]);
+          deleteEntries(d.ids, e?.title ?? '');
+        }
+        return;
+      }
+      moveTo(d, target.id);
+    },
+    [byId, deleteEntries, deleteGroup, list, moveTo],
+  );
+
+  const fileDialog = useCallback(
+    (title: string): DialogText => ({ title, filter: t('dialog.allFiles'), allFiles: t('dialog.allFiles') }),
+    [t],
+  );
+
+  const entryMenu = useCallback(
+    (e: EntrySummary, ev: { clientX: number; clientY: number }) => {
+      const items: MenuEntry[] = inBin(e.groupId)
+        ? [
+            { label: t('menu.restore'), icon: 'restore', onClick: () => void restore(e.id) },
+            'sep',
+            {
+              label: t('menu.deleteForGood'),
+              icon: 'trash',
+              danger: true,
+              keys: 'Delete',
+              onClick: () => deleteEntries([e.id], e.title),
+            },
+          ]
+        : [
+            { label: t('menu.edit'), icon: 'edit', keys: 'Ctrl+E', onClick: () => startEditRef.current() },
+            {
+              label: t('menu.moveTo'),
+              icon: 'folder',
+              onClick: () => setMoving({ kind: 'entry', ids: [e.id] }),
+            },
+            'sep',
+            {
+              label: t('menu.delete'),
+              icon: 'trash',
+              danger: true,
+              keys: 'Delete',
+              onClick: () => deleteEntries([e.id], e.title),
+            },
+          ];
+      setMenu({ x: ev.clientX, y: ev.clientY, items });
+    },
+    [deleteEntries, inBin, restore, t],
+  );
+
+  const groupMenu = useCallback(
+    (g: GroupView, ev: { clientX: number; clientY: number }) => {
+      let items: MenuEntry[];
+      if (g.kind === 'recycleBin') {
+        items = [{ label: t('menu.emptyBin'), icon: 'trash', danger: true, onClick: emptyBin }];
+      } else if (inBin(g.id)) {
+        items = [
+          { label: t('menu.restore'), icon: 'restore', onClick: () => void restore(g.id) },
+          'sep',
+          {
+            label: t('menu.deleteForGood'),
+            icon: 'trash',
+            danger: true,
+            keys: 'Delete',
+            onClick: () => deleteGroup(g),
+          },
+        ];
+      } else {
+        const newHere = () => {
+          setQuery('');
+          setGroupId(g.id);
+          setMode({ kind: 'new' });
+        };
+        items = [
+          { label: t('menu.newEntry'), icon: 'plus', onClick: newHere },
+          { label: t('menu.newGroup'), icon: 'folder', onClick: () => void newSubgroup(g) },
+          { label: t('menu.rename'), icon: 'edit', onClick: () => setRenaming(g.id) },
+        ];
+        if (g.kind === 'normal') {
+          items.push(
+            {
+              label: t('menu.moveTo'),
+              icon: 'folderOpen',
+              onClick: () => setMoving({ kind: 'group', id: g.id }),
+            },
+            'sep',
+            {
+              label: t('menu.delete'),
+              icon: 'trash',
+              danger: true,
+              keys: 'Delete',
+              onClick: () => deleteGroup(g),
+            },
+          );
+        }
+      }
+      setMenu({ x: ev.clientX, y: ev.clientY, items });
+    },
+    [deleteGroup, emptyBin, inBin, newSubgroup, restore, t],
+  );
+
   // ------------------------------------------------------------ actions
 
   const actions: DetailActions = useMemo(() => {
@@ -250,9 +522,35 @@ export function Workspace({ status }: { status: VaultStatus }) {
       },
       edit: () => startEditRef.current(),
       history: () => detail && setHistoryFor(detail.id),
-      exportAttachment: () => toast({ message: t('toast.export'), tone: 'info' }),
+      exportAttachment: (name) => {
+        if (!detail) return;
+        api
+          .exportAttachment(detail.id, name, fileDialog(t('dialog.saveAttachment')))
+          .then((done) => done && toast({ message: t('attachments.exported') }), fail);
+      },
+      addAttachment: () => {
+        if (!detail) return;
+        api.addAttachment(detail.id, fileDialog(t('dialog.attachment'))).then((name) => {
+          if (name === null) return;
+          toast({ message: t('attachments.added', { name }) });
+          refresh();
+        }, fail);
+      },
+      removeAttachment: (name) => {
+        if (!detail) return;
+        api.removeAttachment(detail.id, name).then(() => {
+          toast({ message: t('attachments.removed') });
+          refresh();
+        }, fail);
+      },
+      restore: () => {
+        if (detail) void restore(detail.id);
+      },
+      deleteForGood: () => {
+        if (detail) deleteEntries([detail.id], detail.title);
+      },
     };
-  }, [detail, revealed, t, toast, fail]);
+  }, [detail, revealed, t, toast, fail, fileDialog, refresh, restore, deleteEntries]);
 
   // ------------------------------------------------------------ editing and saving
 
@@ -261,16 +559,6 @@ export function Workspace({ status }: { status: VaultStatus }) {
     if (!q && groupId) return byId.get(groupId) ?? null;
     return groups.find((g) => g.kind === 'root') ?? null;
   }, [q, groupId, byId, groups]);
-
-  const startEdit = useCallback(() => {
-    if (!detail) return;
-    api.getEntryForEdit(detail.id).then((entry) => setMode({ kind: 'edit', entry }), fail);
-  }, [detail, fail]);
-  // the detail actions are created before this; they call through a ref
-  const startEditRef = useRef(startEdit);
-  useEffect(() => {
-    startEditRef.current = startEdit;
-  }, [startEdit]);
 
   const startNew = useCallback(() => setMode({ kind: 'new' }), []);
 
@@ -363,6 +651,12 @@ export function Workspace({ status }: { status: VaultStatus }) {
     [fail],
   );
 
+  // any edit, wherever it came from, changes what the panes show
+  useEffect(() => {
+    const off = listen('vault-edited', () => setVersion((v) => v + 1));
+    return () => void off.then((f) => f());
+  }, []);
+
   // the tray asked to quit while edits are unsaved
   useEffect(() => {
     const off = listen('quit-requested', () => setAsk({ kind: 'quit' }));
@@ -419,8 +713,10 @@ export function Workspace({ status }: { status: VaultStatus }) {
         fn();
       };
 
-      // a dialog answers its own keys
-      if (ask || historyFor) return;
+      // a dialog or menu answers its own keys
+      if (ask || historyFor || menu || moving || confirm || generatorOpen || renaming) return;
+
+      if (ctrl && !e.shiftKey && !e.altKey && k === 'g') return run(() => setGeneratorOpen(true));
 
       // editing takes the keyboard: Escape cancels, Ctrl+S saves, the rest
       // (Tab between fields included) belongs to the form
@@ -469,6 +765,16 @@ export function Workspace({ status }: { status: VaultStatus }) {
 
       if (k === 'Escape' && query) return run(() => setQuery(''));
 
+      if (k === 'Delete' && !typing) {
+        if (at === 'groups') {
+          const g = groupId ? byId.get(groupId) : undefined;
+          if (g?.kind === 'recycleBin') return run(emptyBin);
+          if (g && g.kind !== 'root') return run(() => deleteGroup(g));
+          return;
+        }
+        if (detail) return run(() => deleteEntries([detail.id], detail.title));
+      }
+
       if (at === 'groups') {
         const g = groupId ? byId.get(groupId) : undefined;
         if (k === 'ArrowDown') return run(() => moveGroup((i) => i + 1));
@@ -507,10 +813,18 @@ export function Workspace({ status }: { status: VaultStatus }) {
     byId,
     closeEditor,
     collapsed,
+    confirm,
+    deleteEntries,
+    deleteGroup,
     detail,
+    emptyBin,
     fail,
+    generatorOpen,
     groupId,
     historyFor,
+    menu,
+    moving,
+    renaming,
     list.length,
     lock,
     mode.kind,
@@ -563,6 +877,13 @@ export function Workspace({ status }: { status: VaultStatus }) {
           onSelect={selectGroup}
           onToggle={toggle}
           treeRef={treeRef}
+          onContextMenu={groupMenu}
+          renaming={renaming}
+          onRenamed={renamed}
+          dragged={dragged}
+          onDragGroup={(id) => (dragged.current = id ? { kind: 'group', id } : null)}
+          canDrop={canDrop}
+          onDrop={dropOn}
         />
         <div className="content-layer">
           <EntryList
@@ -575,6 +896,9 @@ export function Workspace({ status }: { status: VaultStatus }) {
             onSelect={setPicked}
             onNew={startNew}
             listRef={listRef}
+            onRowMenu={entryMenu}
+            onDragEntry={(id) => (dragged.current = id ? { kind: 'entry', ids: [id] } : null)}
+            onEmptyBin={!q && groupId !== null && groupId === binId ? emptyBin : undefined}
           />
           <section className="detail pane" aria-live="polite" tabIndex={0} ref={detailRef}>
             {mode.kind === 'edit' ? (
@@ -596,7 +920,13 @@ export function Workspace({ status }: { status: VaultStatus }) {
                 onCancel={closeEditor}
               />
             ) : detail ? (
-              <EntryDetail entry={detail} revealed={revealed} copied={copied} actions={actions} />
+              <EntryDetail
+                entry={detail}
+                revealed={revealed}
+                copied={copied}
+                actions={actions}
+                inBin={inBin(detail.groupId)}
+              />
             ) : (
               <div className="empty">{t('detail.empty')}</div>
             )}
@@ -699,6 +1029,54 @@ export function Workspace({ status }: { status: VaultStatus }) {
           ]}
         >
           <p>{t('dialog.conflict.message')}</p>
+        </Dialog>
+      )}
+
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+
+      {moving && (
+        <MoveDialog
+          groups={groups}
+          excluded={
+            new Set(
+              moving.kind === 'group'
+                ? groups.filter((g) => g.id === moving.id || isInside(g.id, moving.id)).map((g) => g.id)
+                : list.filter((e) => moving.ids.includes(e.id)).map((e) => e.groupId),
+            )
+          }
+          onClose={() => setMoving(null)}
+          onMove={(to) => {
+            const what = moving;
+            setMoving(null);
+            moveTo(what, to);
+          }}
+        />
+      )}
+
+      {confirm && (
+        <Dialog
+          title={t('delete.confirmTitle')}
+          onClose={() => setConfirm(null)}
+          actions={[
+            { label: t('delete.cancel'), primary: true, onClick: () => setConfirm(null) },
+            {
+              label: t('delete.delete'),
+              danger: true,
+              onClick: () => {
+                const run = confirm.run;
+                setConfirm(null);
+                run();
+              },
+            },
+          ]}
+        >
+          <p>{confirm.message}</p>
+        </Dialog>
+      )}
+
+      {generatorOpen && (
+        <Dialog title={t('gen.title')} onClose={() => setGeneratorOpen(false)} actions={[]}>
+          <GeneratorPanel standalone />
         </Dialog>
       )}
 

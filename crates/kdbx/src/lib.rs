@@ -18,6 +18,7 @@
 //! # Ok(()) }
 //! ```
 
+mod create;
 mod crypto;
 mod db;
 mod error;
@@ -25,10 +26,12 @@ mod error;
 pub mod fuzz;
 mod header;
 mod key;
+mod ops;
 mod types;
 mod view;
 pub mod xml;
 
+pub use create::{ARGON2_VERSION, calibrate_argon2id, time_kdf};
 pub use crypto::Cipher;
 pub use db::{Database, Settings, TIME_ELEMENTS};
 pub use error::{Error, Result};

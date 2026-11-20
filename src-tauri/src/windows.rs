@@ -38,9 +38,121 @@ pub fn create_all(app: &AppHandle) -> tauri::Result<()> {
         if config.label == "main" && supports_mica() {
             builder = builder.effects(EffectsBuilder::new().effect(Effect::Mica).build());
         }
+        // dev-desktop mode (see `dev_desktop`): the WebView must not grab the
+        // keyboard focus when it is made, which would activate the window
+        #[cfg(debug_assertions)]
+        if dev_desktop::wanted().is_some() {
+            builder = builder.focused(false);
+        }
         builder.on_page_load(sleep_if_left_hidden).build()?;
     }
+    #[cfg(debug_assertions)]
+    dev_desktop::apply(app);
     Ok(())
+}
+
+/// Development only: Mikoshi runs on another virtual desktop for a test (see
+/// `dev_desktop`). Then nothing may reach the desktop someone works on: no
+/// window is activated, no global hotkey is registered, nothing is typed.
+/// Always `false` in release builds.
+pub fn dev_quiet() -> bool {
+    #[cfg(debug_assertions)]
+    return dev_desktop::wanted().is_some();
+    #[cfg(not(debug_assertions))]
+    false
+}
+
+/// Development only: keeps a test run off the desktop someone is working on.
+///
+/// With `MIKOSHI_DEV_DESKTOP` set to a virtual desktop's GUID (find one with
+/// `tools/desktop-of.ps1`), Mikoshi moves its windows to that desktop as soon
+/// as they exist. Windows only lets a program move its own windows, so this
+/// has to happen in here. Pair it with the WebView2 flags in architecture.md
+/// ("不打扰桌面的测试") so the page keeps drawing on a desktop nobody looks at.
+/// Not compiled into release builds.
+#[cfg(debug_assertions)]
+mod dev_desktop {
+    use tauri::{AppHandle, Manager};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{
+        CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    };
+    use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
+    use windows::core::GUID;
+
+    pub const VAR: &str = "MIKOSHI_DEV_DESKTOP";
+
+    /// `{xxxxxxxx-xxxx-...}` with or without braces.
+    fn parse(text: &str) -> Option<GUID> {
+        let hex: String = text
+            .chars()
+            .filter(|c| !matches!(c, '{' | '}' | '-') && !c.is_whitespace())
+            .collect();
+        (hex.len() == 32)
+            .then(|| u128::from_str_radix(&hex, 16).ok())
+            .flatten()
+            .map(GUID::from_u128)
+    }
+
+    pub fn wanted() -> Option<GUID> {
+        let text = std::env::var(VAR).ok()?;
+        let guid = parse(&text);
+        if guid.is_none() {
+            log::warn!("{VAR} is not a GUID; windows stay where Windows puts them");
+        }
+        guid
+    }
+
+    pub fn apply(app: &AppHandle) {
+        if wanted().is_none() {
+            return;
+        }
+        for label in ["main", "quick"] {
+            let Some(w) = app.get_webview_window(label) else {
+                continue;
+            };
+            // A window without a taskbar button belongs to no virtual desktop
+            // (Windows shows it on whichever one is in front), so moving it
+            // does nothing. The quick search box gets a button while testing.
+            // That takes effect a little later, so `show` moves it again.
+            if label == "quick" {
+                let _ = w.set_skip_taskbar(false);
+            }
+            move_window(&w);
+        }
+    }
+
+    /// Puts a window on the desktop in `MIKOSHI_DEV_DESKTOP`. Harmless when
+    /// it is there already.
+    pub fn move_window(w: &tauri::WebviewWindow) {
+        let Some(desktop) = wanted() else { return };
+        let Ok(hwnd) = w.hwnd() else { return };
+        let hwnd = HWND(hwnd.0);
+        // SAFETY: the window handle belongs to this process and is alive;
+        // the COM calls run on this (the main) thread
+        let result = unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            CoCreateInstance::<_, IVirtualDesktopManager>(&VirtualDesktopManager, None, CLSCTX_ALL)
+                .and_then(|m| m.MoveWindowToDesktop(hwnd, &desktop))
+        };
+        if let Err(e) = result {
+            log::warn!("{}: cannot move to the desktop in {VAR}: {e}", w.label());
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn reads_guids() {
+            let g = super::parse("0be3f803-fe19-44ff-99af-3dbcf861013b").unwrap();
+            assert_eq!(g.to_u128(), 0x0be3f803_fe19_44ff_99af_3dbcf861013b);
+            assert_eq!(
+                super::parse("{0BE3F803-FE19-44FF-99AF-3DBCF861013B}"),
+                Some(g)
+            );
+            assert_eq!(super::parse("nope"), None);
+        }
+    }
 }
 
 /// The windows are created hidden. The quick search box stays hidden until
@@ -70,6 +182,8 @@ fn sleep_if_left_hidden(w: WebviewWindow, payload: tauri::webview::PageLoadPaylo
 /// the page: a suspended page does not run it.
 pub fn show(w: &WebviewWindow) -> tauri::Result<()> {
     set_awake(w, true);
+    #[cfg(debug_assertions)]
+    dev_desktop::move_window(w);
     w.show()
 }
 
@@ -146,7 +260,9 @@ pub fn focus_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = show(&w);
-        let _ = w.set_focus();
+        if !dev_quiet() {
+            let _ = w.set_focus();
+        }
     }
 }
 
@@ -197,7 +313,9 @@ pub fn show_quick_mode(app: &AppHandle, pick: bool) -> tauri::Result<()> {
         w.set_size(tauri::LogicalSize::new(QUICK_SIZE.0, QUICK_SIZE.1))?;
         w.center()?;
         show(&w)?;
-        w.set_focus()?;
+        if !dev_quiet() {
+            w.set_focus()?;
+        }
         w.emit("quick-shown", QuickShown { pick })?;
     }
     Ok(())
@@ -249,7 +367,8 @@ pub fn is_ours(hwnd: HWND) -> bool {
 fn remember_foreground(app: &AppHandle) {
     // SAFETY: no preconditions
     let hwnd = unsafe { GetForegroundWindow() };
-    let previous = (!hwnd.is_invalid() && !is_ours(hwnd)).then_some(hwnd.0 as isize);
+    let previous =
+        (!hwnd.is_invalid() && !is_ours(hwnd) && !dev_quiet()).then_some(hwnd.0 as isize);
     if let Ok(mut p) = app.state::<PreviousWindow>().0.lock() {
         *p = previous;
     }

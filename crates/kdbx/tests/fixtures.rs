@@ -427,3 +427,245 @@ fn a_new_entry_with_an_empty_protected_password_round_trips() {
         Some("")
     );
 }
+
+// ---------------------------------------------------------------- M8
+
+fn group_named(db: &Database, name: &str) -> kdbx::Uuid {
+    db.groups()
+        .into_iter()
+        .find(|g| g.name() == name)
+        .unwrap_or_else(|| panic!("no group {name}"))
+        .uuid()
+        .unwrap()
+}
+
+fn deleted_ids(db: &Database) -> Vec<kdbx::Uuid> {
+    db.document()
+        .child("Root")
+        .and_then(|r| r.child("DeletedObjects"))
+        .map(|d| {
+            d.children_named("DeletedObject")
+                .filter_map(|o| kdbx::Uuid::from_base64(&o.child_text("UUID")?))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every attachment of every entry (history included) with its bytes.
+fn all_attachments(db: &Database) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    for e in db.entries() {
+        for v in std::iter::once(e).chain(e.history().collect::<Vec<_>>()) {
+            for a in v.attachments() {
+                out.push((
+                    a.name.into_owned(),
+                    a.data.map(|d| d.into_owned()).unwrap_or_default(),
+                ));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn fast_settings(cipher: kdbx::Cipher) -> kdbx::Settings {
+    kdbx::Settings {
+        cipher,
+        kdf: kdbx::Kdf::Argon2 {
+            id: true,
+            memory: 1 << 20,
+            iterations: 2,
+            parallelism: 2,
+            version: kdbx::ARGON2_VERSION,
+        },
+        compressed: true,
+    }
+}
+
+#[test]
+fn groups_rename_and_move_but_not_into_themselves() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    let nested = group_named(&db, "Nested");
+    let level2 = group_named(&db, "Level 2");
+    let general = group_named(&db, "General");
+    assert!(!db.move_group(nested, level2), "into its own subgroup");
+    assert!(!db.move_group(nested, nested), "into itself");
+    let root = db.root_group().unwrap().uuid().unwrap();
+    assert!(!db.move_group(root, general), "the root group stays");
+
+    assert!(db.rename_group(nested, "Renamed"));
+    assert!(db.move_group(nested, general));
+    assert_eq!(db.parent_of_group(nested), Some(general));
+    assert_eq!(
+        db.parent_of_group(level2),
+        Some(nested),
+        "children move along"
+    );
+    assert_eq!(db.previous_parent(nested), Some(root));
+
+    let again = reopen(&db);
+    assert!(again.document() == db.document());
+    assert_eq!(again.group(nested).unwrap().name(), "Renamed");
+}
+
+#[test]
+fn deleting_for_good_records_deleted_objects() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    let entry = entry_titled(&db, "Full Fields").uuid().unwrap();
+    assert!(db.delete_entry(entry));
+    assert!(db.entry(entry).is_none());
+    assert!(!db.delete_entry(entry), "already gone");
+    assert!(deleted_ids(&db).contains(&entry));
+
+    let nested = group_named(&db, "Nested");
+    let level2 = group_named(&db, "Level 2");
+    let mut inside = Vec::new();
+    for g in db.groups() {
+        let gid = g.uuid().unwrap();
+        let mut cur = Some(gid);
+        let mut below = false;
+        while let Some(c) = cur {
+            if c == nested {
+                below = true;
+                break;
+            }
+            cur = db.parent_of_group(c);
+        }
+        if below {
+            inside.push(gid);
+            inside.extend(g.entries().filter_map(|e| e.uuid()));
+        }
+    }
+    assert!(inside.contains(&level2));
+    assert!(db.delete_group(nested));
+    assert!(db.group(level2).is_none());
+    let deleted = deleted_ids(&db);
+    for id in &inside {
+        assert!(deleted.contains(id));
+    }
+    let root = db.root_group().unwrap().uuid().unwrap();
+    assert!(!db.delete_group(root));
+
+    let again = reopen(&db);
+    assert!(again.document() == db.document());
+    assert!(again.binaries() == db.binaries());
+}
+
+#[test]
+fn attachments_leave_the_pool_when_nothing_uses_them() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    let before = all_attachments(&db);
+    let pool = db.binaries().len();
+    let (id, name) = db
+        .entries()
+        .into_iter()
+        .find_map(|e| {
+            let a = e.attachments().next()?;
+            Some((e.uuid()?, a.name.into_owned()))
+        })
+        .expect("an entry with an attachment");
+    assert!(db.remove_attachment(id, &name));
+    assert!(!db.remove_attachment(id, &name), "already gone");
+    assert!(db.entry(id).unwrap().attachments().all(|a| a.name != name));
+
+    // every other attachment still reads the same bytes
+    let after = all_attachments(&db);
+    let mut expected = before.clone();
+    let i = expected.iter().position(|(n, _)| *n == name).unwrap();
+    expected.remove(i);
+    assert_eq!(after, expected);
+    assert!(db.binaries().len() <= pool);
+    let again = reopen(&db);
+    assert_eq!(all_attachments(&again), after);
+    assert!(again.binaries() == db.binaries());
+}
+
+#[test]
+fn removing_every_attachment_empties_the_pool() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    let mut ids = Vec::new();
+    for e in db.entries() {
+        for a in e.attachments() {
+            ids.push((e.uuid().unwrap(), a.name.into_owned()));
+        }
+    }
+    for (id, name) in &ids {
+        assert!(db.remove_attachment(*id, name));
+    }
+    // older versions may keep theirs; the pool holds only what they use
+    let still_used = all_attachments(&db).len();
+    if still_used == 0 {
+        assert!(db.binaries().is_empty());
+    }
+    let again = reopen(&db);
+    assert!(again.binaries() == db.binaries());
+}
+
+#[test]
+fn picking_a_standard_icon_drops_the_custom_one() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    let id = entry_titled(&db, "Custom Icon Entry").uuid().unwrap();
+    assert!(db.entry(id).unwrap().custom_icon().is_some());
+    db.entry_mut(id).unwrap().set_icon(12);
+    let again = reopen(&db);
+    let e = again.entry(id).unwrap();
+    assert_eq!(e.icon_id(), Some(12));
+    assert_eq!(e.custom_icon(), None);
+}
+
+#[test]
+fn a_recycle_bin_is_made_when_missing() {
+    let mut db = Database::create("New <&> DB", &fast_settings(kdbx::Cipher::Aes256)).unwrap();
+    assert_eq!(db.meta().database_name(), "New <&> DB");
+    assert!(db.recycle_bin().is_none());
+    let bin = db.ensure_recycle_bin("Recycle Bin").unwrap();
+    assert_eq!(db.ensure_recycle_bin("other name"), Some(bin), "made once");
+    assert_eq!(db.meta().recycle_bin(), Some(bin));
+    let g = db.group(bin).unwrap();
+    assert_eq!(g.enable_searching(), Some(false));
+    assert_eq!(g.enable_autotype(), Some(false));
+
+    // deleting the bin itself clears the setting
+    assert!(db.delete_group(bin));
+    assert_eq!(db.meta().recycle_bin(), None);
+    let again = reopen(&db);
+    assert!(again.document() == db.document());
+}
+
+#[test]
+fn new_databases_open_with_either_cipher() {
+    for cipher in [kdbx::Cipher::Aes256, kdbx::Cipher::ChaCha20] {
+        let settings = fast_settings(cipher);
+        let mut db = Database::create("Mine", &settings).unwrap();
+        let root = db.root_group().unwrap().uuid().unwrap();
+        assert_eq!(db.root_group().unwrap().name(), "Mine");
+        let id = db.add_entry(root).unwrap();
+        db.entry_mut(id).unwrap().set_field("Title", "First", false);
+        db.entry_mut(id)
+            .unwrap()
+            .set_field("Password", "s3cret", true);
+
+        let k = key(true, None);
+        let data = db.save(&k).unwrap();
+        assert_eq!(kdbx::version(&data).unwrap(), (4, 1));
+        let again = Database::open(&data, &k).unwrap();
+        assert_eq!(again.settings(), settings);
+        let e = again.entry(id).unwrap();
+        assert_eq!(e.get("Password").as_deref(), Some("s3cret"));
+        assert!(e.field("Password").unwrap().protected());
+        assert!(again.document() == db.document());
+    }
+}
+
+#[test]
+fn calibration_scales_iterations_to_the_target() {
+    let kdf = kdbx::calibrate_argon2id(1 << 20, 1, std::time::Duration::from_millis(50)).unwrap();
+    let kdbx::Kdf::Argon2 { id, iterations, .. } = kdf else {
+        panic!("not argon2")
+    };
+    assert!(id);
+    assert!((2..=10_000).contains(&iterations));
+    let took = kdbx::time_kdf(&kdf).unwrap();
+    // generous: the machine may be busy
+    assert!(took < std::time::Duration::from_millis(500), "{took:?}");
+}

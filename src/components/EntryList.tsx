@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { usePrefs } from '../app/contexts';
 import type { EntrySort, EntrySummary, SortKey } from '../api/types';
 import { EntryIcon } from './bits';
@@ -21,6 +21,10 @@ interface Props {
   onNew: () => void;
   /** the list takes keyboard focus as a whole; Workspace moves the selection */
   listRef: RefObject<HTMLElement | null>;
+  onRowMenu: (entry: EntrySummary, e: MouseEvent) => void;
+  onDragEntry: (id: string | null) => void;
+  /** shown when the recycle bin is open: empties it */
+  onEmptyBin?: (() => void) | undefined;
 }
 
 /** "Sort by" button and menu. Picking the current key again flips the order. */
@@ -98,6 +102,9 @@ export function EntryList({
   onSelect,
   onNew,
   listRef,
+  onRowMenu,
+  onDragEntry,
+  onEmptyBin,
 }: Props) {
   const { t, tn, fmt } = usePrefs();
   const terms = useMemo(() => searchTerms(query), [query]);
@@ -111,14 +118,26 @@ export function EntryList({
     <section className="list" aria-label={t('list.label')}>
       <div className="list-head">
         <h2 className="list-title">{title}</h2>
-        <button
-          className="icon-btn"
-          title={`${t('list.new')} (Ctrl+N)`}
-          aria-label={t('list.new')}
-          onClick={onNew}
-        >
-          <Icon name="plus" />
-        </button>
+        {onEmptyBin ? (
+          <button
+            className="btn small danger"
+            title={t('menu.emptyBin')}
+            onClick={onEmptyBin}
+            disabled={entries.length === 0}
+          >
+            <Icon name="trash" />
+            {t('menu.emptyBin')}
+          </button>
+        ) : (
+          <button
+            className="icon-btn"
+            title={`${t('list.new')} (Ctrl+N)`}
+            aria-label={t('list.new')}
+            onClick={onNew}
+          >
+            <Icon name="plus" />
+          </button>
+        )}
       </div>
       <div className="list-sub">
         <span className="list-count">{tn('list.count', entries.length)}</span>
@@ -145,6 +164,18 @@ export function EntryList({
               role="option"
               aria-selected={e.id === selected}
               onClick={() => onSelect(e.id)}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                onSelect(e.id);
+                onRowMenu(e, ev);
+              }}
+              draggable
+              onDragStart={(ev) => {
+                ev.dataTransfer.effectAllowed = 'move';
+                ev.dataTransfer.setData('text/plain', '');
+                onDragEntry(e.id);
+              }}
+              onDragEnd={() => onDragEntry(null)}
             >
               <EntryIcon icon={e.icon} customIcon={e.customIcon} title={e.title} />
               <span className="row-title">

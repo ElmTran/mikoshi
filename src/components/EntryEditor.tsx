@@ -1,7 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { EditableEntry, EntryEdit, FieldEdit, TotpEdit, TotpSummary } from '../api/types';
 import { usePrefs } from '../app/contexts';
+import { GeneratorPanel } from './Generator';
 import { Icon } from './Icon';
+import { IconPicker } from './IconPicker';
+import { StrengthMeter } from './Strength';
+import { useDismiss } from './useDismiss';
 
 interface Props {
   /** the entry being edited; null for a new one */
@@ -40,6 +44,8 @@ interface Form {
   totpAlgorithm: string;
   totpDigits: number;
   totpPeriod: number;
+  /** a standard icon picked here; null leaves the icon as it is */
+  icon: number | null;
 }
 
 /** UTC ISO to the value a `datetime-local` input takes (local time). */
@@ -76,6 +82,7 @@ function initial(entry: EditableEntry | null): Form {
     totpAlgorithm: entry?.totp?.algorithm ?? 'SHA1',
     totpDigits: entry?.totp?.digits ?? 6,
     totpPeriod: entry?.totp?.period ?? 30,
+    icon: null,
   };
 }
 
@@ -91,6 +98,40 @@ function Summary({ totp }: { totp: TotpSummary }) {
         period: totp.period ?? 30,
       })}
     </span>
+  );
+}
+
+/** The key button next to the password field, with the generator in a popover. */
+function GeneratorButton({ onUse }: { onUse: (password: string) => void }) {
+  const { t } = usePrefs();
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, root, close);
+  return (
+    <div className="gen-anchor" ref={root}>
+      <button
+        type="button"
+        className={open ? 'act active' : 'act'}
+        title={`${t('editor.generate')} (Ctrl+G)`}
+        aria-label={t('editor.generate')}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        data-generator-toggle
+      >
+        <Icon name="key" />
+      </button>
+      {open && (
+        <div className="flyout gen-flyout" role="dialog" aria-label={t('gen.title')}>
+          <GeneratorPanel
+            onUse={(pw) => {
+              onUse(pw);
+              setOpen(false);
+            }}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -151,6 +192,7 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
       expires: form.expiresOn ? fromLocalInput(form.expires) : null,
       fields,
       totp,
+      icon: form.icon,
     });
   };
 
@@ -160,6 +202,13 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
   return (
     <form className="detail-scroll editor" onSubmit={submit} data-editor>
       <header className="detail-head">
+        <IconPicker
+          icon={entry?.icon ?? 0}
+          customIcon={entry?.customIcon ?? null}
+          title={form.title}
+          picked={form.icon}
+          onPick={(i) => set('icon', i)}
+        />
         <div className="detail-titles">
           <h1 className="detail-title">{entry ? t('editor.edit') : t('editor.new')}</h1>
           <div className="detail-path">{groupName}</div>
@@ -207,7 +256,14 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
             >
               <Icon name={showPassword ? 'eyeOff' : 'eye'} />
             </button>
+            <GeneratorButton
+              onUse={(pw) => {
+                set('password', pw);
+                setShowPassword(true);
+              }}
+            />
           </div>
+          <StrengthMeter password={form.password} />
         </div>
         <label className="ef">
           <span>{t('editor.url')}</span>

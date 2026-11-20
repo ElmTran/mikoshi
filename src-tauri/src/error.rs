@@ -48,6 +48,18 @@ pub enum AppError {
     SaveFailed,
     #[error("saving turns the file into KDBX 4.1")]
     FormatUpgrade,
+    #[error("not possible for this item")]
+    NotAllowed,
+    #[error("the name is empty")]
+    EmptyName,
+    #[error("a file with that name already exists")]
+    FileExists,
+    #[error("the file could not be written")]
+    WriteFailed,
+    #[error("the file is too large to attach")]
+    TooLarge,
+    #[error("no kind of character is selected")]
+    NoCharacters,
     #[error("only http and https URLs are opened")]
     UnsafeUrl,
     #[error("the clipboard could not be written")]
@@ -99,6 +111,19 @@ impl From<OpenError> for AppError {
 
 pub type AppResult<T> = Result<T, AppError>;
 
+impl From<mikoshi_core::vault::CreateError> for AppError {
+    fn from(e: mikoshi_core::vault::CreateError) -> Self {
+        use mikoshi_core::vault::CreateError as C;
+        match e {
+            C::Exists => AppError::FileExists,
+            C::NoKey => AppError::EmptyPassword,
+            C::KeyFileUnreadable => AppError::KeyFileUnreadable,
+            C::Kdf => AppError::Unsupported,
+            C::Write => AppError::WriteFailed,
+        }
+    }
+}
+
 impl From<mikoshi_core::vault::SaveError> for AppError {
     fn from(e: mikoshi_core::vault::SaveError) -> Self {
         use mikoshi_core::vault::SaveError as S;
@@ -118,7 +143,8 @@ impl From<mikoshi_core::vault::EditError> for AppError {
             E::FieldName => AppError::FieldName,
             E::TotpInvalid => AppError::TotpInvalid,
             E::Expiry => AppError::Expiry,
-            E::RecycleBin => AppError::NotFound,
+            E::RecycleBin | E::NotAllowed => AppError::NotAllowed,
+            E::EmptyName => AppError::EmptyName,
         }
     }
 }

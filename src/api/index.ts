@@ -11,17 +11,21 @@ import {
   type AppInfo,
   type CopyResult,
   type CustomIcon,
+  type Deleted,
   type DialogText,
   type EditableEntry,
   type EntryDetail,
   type EntryEdit,
   type EntrySummary,
   type ErrorCode,
+  type Generated,
+  type GeneratorOptions,
   type GroupView,
   type HistoryItem,
   type HotkeyStatus,
   type SaveOptions,
   type Settings,
+  type Strength,
   type TotpView,
   type VaultStatus,
 } from './types';
@@ -99,6 +103,39 @@ export const api = {
   saveDatabase: (options?: SaveOptions) => call<VaultStatus>('save_database', { options }),
   /** reads the file again, dropping unsaved edits */
   reloadDatabase: () => call<VaultStatus>('reload_database'),
+  /** whether deleting these is for good (they are in the bin, or it is off) */
+  deletesPermanently: (entryIds: string[], groupIds: string[]) =>
+    call<boolean>('deletes_permanently', { entryIds, groupIds }),
+  /** `binName`: the recycle bin's name if it has to be made */
+  deleteEntries: (entryIds: string[], binName: string) =>
+    call<Deleted>('delete_entries', { entryIds, binName }),
+  deleteGroup: (groupId: string, binName: string) => call<Deleted>('delete_group', { groupId, binName }),
+  /** takes an entry or group out of the recycle bin */
+  restoreItem: (id: string) => call<void>('restore_item', { id }),
+  emptyRecycleBin: () => call<number>('empty_recycle_bin'),
+  createGroup: (parentId: string, name: string) => call<string>('create_group', { parentId, name }),
+  renameGroup: (groupId: string, name: string) => call<void>('rename_group', { groupId, name }),
+  moveGroup: (groupId: string, to: string) => call<void>('move_group', { groupId, to }),
+  moveEntries: (entryIds: string[], to: string) => call<void>('move_entries', { entryIds, to }),
+  /** false when the save dialog was cancelled */
+  exportAttachment: (entryId: string, name: string, text: DialogText) =>
+    call<boolean>('export_attachment', { entryId, name, text }),
+  /** the name the attachment got; null when the dialog was cancelled */
+  addAttachment: (entryId: string, text: DialogText) =>
+    call<string | null>('add_attachment', { entryId, text }),
+  removeAttachment: (entryId: string, name: string) => call<void>('remove_attachment', { entryId, name }),
+  /** where a new database goes; null when cancelled */
+  chooseNewDatabase: (text: DialogText, fileName: string) =>
+    call<string | null>('choose_new_database', { text, fileName }),
+  /** makes a new key file; its path, or null when cancelled */
+  createKeyFile: (text: DialogText, fileName: string) =>
+    call<string | null>('create_key_file', { text, fileName }),
+  createDatabase: (path: string, name: string, password: string, keyFile: string | null) =>
+    call<VaultStatus>('create_database', { path, name, password: password || null, keyFile }),
+  generatePassword: (options: GeneratorOptions) => call<Generated>('generate_password', { options }),
+  passwordStrength: (password: string) => call<Strength>('password_strength', { password }),
+  /** copies a value already on screen (a generated password) as a secret */
+  copySecret: (value: string) => call<CopyResult>('copy_secret', { value }),
   copyField: (entryId: string, key: string) => call<CopyResult>('copy_field', { entryId, key }),
   getTotp: (entryId: string) => call<TotpView>('get_totp', { entryId }),
   /** opens the entry's URL in the default browser (http and https only) */

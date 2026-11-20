@@ -17,6 +17,10 @@ hmac = "0.13"
 sha1 = "0.11"
 sha2 = "0.11"
 percent-encoding = "2"
+# Password generator: the OS random source, and strength estimates (Dropbox's
+# zxcvbn, run here so its dictionaries never go into the frontend)
+getrandom = "0.4"
+zxcvbn = "3"
 # window associations written as //regex// (the version already in the tree)
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 

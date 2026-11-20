@@ -1532,9 +1532,11 @@
   flex: 0 0 auto;
 }
 
-.ef input,
-.ef textarea,
-.ef select,
+/* direct children only: the generator popover sits inside a field row */
+.ef > input,
+.ef > textarea,
+.ef > select,
+.ef-row > input,
 .field-row input {
   font: inherit;
   font-size: var(--fs-body);
@@ -1547,15 +1549,16 @@
   outline: none;
 }
 
-.ef input:focus,
-.ef textarea:focus,
-.ef select:focus,
+.ef > input:focus,
+.ef > textarea:focus,
+.ef > select:focus,
+.ef-row > input:focus,
 .field-row input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
 
-.ef textarea {
+.ef > textarea {
   resize: vertical;
 }
 
@@ -1565,7 +1568,7 @@
   gap: 8px;
 }
 
-.ef-row input {
+.ef-row > input {
   flex: 1;
 }
 
@@ -1765,4 +1768,289 @@
 
 .hv-head .detail-title {
   font-size: var(--fs-subtitle);
+}
+
+/* ---------------------------------------------------------------- M8: menus, groups, dragging */
+
+.context-menu {
+  position: fixed;
+  top: auto;
+  right: auto;
+  width: 220px;
+  padding: 4px;
+  z-index: 60;
+  transform-origin: top left;
+}
+.context-menu .menu-item {
+  justify-content: flex-start;
+}
+.context-menu .menu-item > span:not(.menu-icon-gap) {
+  flex: 1;
+}
+.context-menu .menu-item .icon {
+  color: var(--text-2);
+}
+.context-menu .menu-item.danger,
+.context-menu .menu-item.danger .icon {
+  color: var(--danger);
+}
+.context-menu .menu-item:disabled {
+  opacity: 0.45;
+}
+.menu-icon-gap {
+  width: 16px;
+  flex: none;
+}
+.menu-keys {
+  font-family: var(--font-text);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  background: none;
+  border: 0;
+}
+
+.group.drop {
+  background: var(--subtle-selected);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+.group.editing {
+  cursor: default;
+}
+.group-rename {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--control);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-control);
+  padding: 2px 6px;
+  outline: none;
+}
+.row[draggable='true'] {
+  -webkit-user-drag: element;
+}
+
+.move-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 50vh;
+  overflow: auto;
+}
+.move-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px 0 calc(10px + var(--indent, 0) * 16px);
+  border-radius: var(--r-control);
+  color: var(--text);
+  text-align: left;
+}
+.move-item:hover:not(:disabled) {
+  background: var(--subtle-hover);
+}
+.move-item.on {
+  background: var(--subtle-selected);
+  font-weight: 600;
+}
+.move-item:disabled {
+  opacity: 0.4;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.btn.small.danger {
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- strength and generator */
+
+.strength {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  margin-top: 6px;
+}
+.strength-bars {
+  display: inline-flex;
+  gap: 3px;
+}
+.strength-bars > span {
+  width: 22px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--subtle-selected);
+}
+.strength.s0 .on,
+.strength.s1 .on {
+  background: var(--danger);
+}
+.strength.s2 .on {
+  background: #c78a00;
+}
+.strength.s3 .on,
+.strength.s4 .on {
+  background: var(--success);
+}
+
+.gen-anchor {
+  position: relative;
+}
+.act.active {
+  background: var(--subtle-selected);
+}
+.gen-flyout {
+  width: 360px;
+  z-index: 30;
+}
+.generator {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px;
+}
+.gen-out {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  background: var(--control);
+  border: 1px solid var(--control-stroke);
+}
+.gen-password {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  /* passphrases break at their separators, passwords anywhere */
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.gen-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gen-meta .strength {
+  margin-top: 0;
+}
+.gen-bits,
+.gen-note {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+.gen-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gen-range,
+.gen-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.gen-range input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.gen-range input[type='number'],
+.gen-sep input {
+  width: 64px;
+  font: inherit;
+  color: var(--text);
+  background: var(--control);
+  border: 1px solid var(--control-stroke);
+  border-radius: var(--r-control);
+  padding: 4px 6px;
+}
+.gen-num {
+  width: 24px;
+  text-align: right;
+  color: var(--text);
+}
+.gen-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+.gen-checks .check:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+.gen-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.dialog .generator {
+  padding: 0;
+}
+
+/* ---------------------------------------------------------------- icon picker */
+
+.icon-picker {
+  position: relative;
+}
+.icon-picker-btn {
+  border-radius: var(--r-layer);
+  padding: 0;
+}
+.icon-picker-btn:hover {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.icon-grid {
+  left: 0;
+  right: auto;
+  width: 320px;
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 2px;
+  z-index: 30;
+  transform-origin: top left;
+}
+.icon-grid button {
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-control);
+  color: var(--text-2);
+}
+.icon-grid button:hover {
+  background: var(--subtle-hover);
+  color: var(--text);
+}
+.icon-grid button.on {
+  background: var(--accent);
+  color: var(--text-on-accent, #fff);
+}
+
+/* ---------------------------------------------------------------- new database */
+
+.new-db-link {
+  align-self: center;
+  margin-top: 6px;
+}
+.new-db .link-btn.back {
+  align-self: center;
+}
+.newdb-keyfile {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.unlock-hint.small {
+  font-size: var(--fs-caption);
+  margin: 4px 0 0;
 }

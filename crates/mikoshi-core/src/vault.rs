@@ -26,15 +26,21 @@ use crate::model::{
 use crate::search::{Haystack, Query};
 use crate::totp::{self, Totp, TotpError};
 
+mod create;
 mod edit;
 #[cfg(test)]
 mod edit_tests;
+mod organize;
 mod save;
 
+pub use create::{
+    CreateError, NEW_KDF_MEMORY, NEW_KDF_TARGET, NewDatabase, calibrated_settings, create_key_file,
+};
 pub use edit::{
     EditError, EditableEntry, EditableField, EntryEdit, FieldEdit, HistoryItem, TotpEdit,
     TotpSummary,
 };
+pub use organize::Deleted;
 pub use save::{SaveError, SaveOptions, backup_path};
 
 /// Why a database could not be opened. Carries no user data, so it can be

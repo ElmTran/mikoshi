@@ -215,7 +215,7 @@ impl Database {
         Ok(out)
     }
 
-    fn from_parts(
+    pub(crate) fn from_parts(
         header: OuterHeader,
         stream_id: u32,
         binaries: Vec<Binary>,

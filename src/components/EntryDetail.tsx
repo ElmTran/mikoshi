@@ -13,6 +13,12 @@ export interface DetailActions {
   edit: () => void;
   history: () => void;
   exportAttachment: (name: string) => void;
+  addAttachment: () => void;
+  removeAttachment: (name: string) => void;
+  /** out of the recycle bin */
+  restore: () => void;
+  /** from inside the recycle bin */
+  deleteForGood: () => void;
 }
 
 interface Props {
@@ -22,6 +28,8 @@ interface Props {
   /** field key whose copy button shows the "copied" check */
   copied: string | null;
   actions: DetailActions;
+  /** the entry is in the recycle bin */
+  inBin?: boolean;
 }
 
 const MASK = '••••••••••••'; // fixed length: never hints at the real one
@@ -152,7 +160,7 @@ function FieldRow({
   );
 }
 
-export function EntryDetail({ entry, revealed, copied, actions }: Props) {
+export function EntryDetail({ entry, revealed, copied, actions, inBin }: Props) {
   const { t, fmt } = usePrefs();
   const secretValue = (key: string) =>
     key in revealed ? (
@@ -170,14 +178,26 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
           <div className="detail-path">{entry.groupPath.join(' / ')}</div>
         </div>
         <div className="detail-actions">
-          <button
-            className="btn primary"
-            title={`${t('detail.autotype')} (Ctrl+Shift+V)`}
-            onClick={actions.autotype}
-          >
-            <Icon name="keyboard" />
-            {t('detail.autotype')}
-          </button>
+          {inBin ? (
+            <>
+              <button className="btn primary" onClick={actions.restore}>
+                <Icon name="restore" />
+                {t('detail.restore')}
+              </button>
+              <button className="btn danger" title={t('menu.deleteForGood')} onClick={actions.deleteForGood}>
+                <Icon name="trash" />
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn primary"
+              title={`${t('detail.autotype')} (Ctrl+Shift+V)`}
+              onClick={actions.autotype}
+            >
+              <Icon name="keyboard" />
+              {t('detail.autotype')}
+            </button>
+          )}
           <button className="btn" title={t('history.title')} onClick={actions.history}>
             <Icon name="clock" />
           </button>
@@ -187,6 +207,13 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
           </button>
         </div>
       </header>
+
+      {inBin && (
+        <div className="infobar">
+          <Icon name="trash" />
+          <span>{t('detail.inBin')}</span>
+        </div>
+      )}
 
       {entry.expired && entry.expires && (
         <div className="infobar danger">
@@ -273,9 +300,15 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
         </section>
       )}
 
-      {entry.attachments.length > 0 && (
-        <section className="detail-section">
+      <section className="detail-section">
+        <div className="section-head">
           <h2>{t('detail.attachments')}</h2>
+          <button className="btn small" onClick={actions.addAttachment}>
+            <Icon name="plus" />
+            {t('attachments.add')}
+          </button>
+        </div>
+        {entry.attachments.length > 0 && (
           <ul className="attachments">
             {entry.attachments.map((a) => (
               <li key={a.name} className="card">
@@ -289,11 +322,19 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
                 >
                   <Icon name="download" />
                 </button>
+                <button
+                  className="act"
+                  title={t('attachments.remove')}
+                  aria-label={t('attachments.remove')}
+                  onClick={() => actions.removeAttachment(a.name)}
+                >
+                  <Icon name="trash" />
+                </button>
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        )}
+      </section>
 
       <footer className="times">
         <div>

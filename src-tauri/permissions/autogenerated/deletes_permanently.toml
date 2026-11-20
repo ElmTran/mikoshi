@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-deletes-permanently"
+description = "Enables the deletes_permanently command without any pre-configured scope."
+commands.allow = ["deletes_permanently"]
+
+[[permission]]
+identifier = "deny-deletes-permanently"
+description = "Denies the deletes_permanently command without any pre-configured scope."
+commands.deny = ["deletes_permanently"]

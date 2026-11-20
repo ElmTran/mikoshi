@@ -109,6 +109,8 @@ pub struct Settings {
     pub backup_on_save: bool,
     /// what happens to unsaved edits when the database is locked
     pub lock_unsaved: LockUnsaved,
+    /// the password generator's last choices (never a generated password)
+    pub generator: mikoshi_core::generator::GeneratorOptions,
 }
 
 impl Default for Settings {
@@ -130,6 +132,7 @@ impl Default for Settings {
             autotype_key_delay_ms: 20,
             backup_on_save: true,
             lock_unsaved: LockUnsaved::default(),
+            generator: Default::default(),
         }
     }
 }

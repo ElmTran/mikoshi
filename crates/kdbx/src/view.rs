@@ -17,12 +17,12 @@ use crate::xml::{Element, Node};
 /// the document root. Rebuilt after every structural edit.
 #[derive(Default)]
 pub(crate) struct Index {
-    root_group: Option<Vec<usize>>,
-    groups: HashMap<Uuid, Vec<usize>>,
-    entries: HashMap<Uuid, Vec<usize>>,
+    pub(crate) root_group: Option<Vec<usize>>,
+    pub(crate) groups: HashMap<Uuid, Vec<usize>>,
+    pub(crate) entries: HashMap<Uuid, Vec<usize>>,
 }
 
-fn at<'a>(root: &'a Element, path: &[usize]) -> Option<&'a Element> {
+pub(crate) fn at<'a>(root: &'a Element, path: &[usize]) -> Option<&'a Element> {
     let mut el = root;
     for &i in path {
         el = match el.children.get(i)? {
@@ -33,7 +33,7 @@ fn at<'a>(root: &'a Element, path: &[usize]) -> Option<&'a Element> {
     Some(el)
 }
 
-fn at_mut<'a>(root: &'a mut Element, path: &[usize]) -> Option<&'a mut Element> {
+pub(crate) fn at_mut<'a>(root: &'a mut Element, path: &[usize]) -> Option<&'a mut Element> {
     let mut el = root;
     for &i in path {
         el = match el.children.get_mut(i)? {
@@ -44,11 +44,11 @@ fn at_mut<'a>(root: &'a mut Element, path: &[usize]) -> Option<&'a mut Element> 
     Some(el)
 }
 
-fn uuid_of(el: &Element) -> Option<Uuid> {
+pub(crate) fn uuid_of(el: &Element) -> Option<Uuid> {
     Uuid::from_base64(&el.child_text("UUID")?)
 }
 
-fn opt_bool(el: &Element, name: &str) -> Option<bool> {
+pub(crate) fn opt_bool(el: &Element, name: &str) -> Option<bool> {
     let t = el.child_text(name)?;
     let t = t.trim();
     if t.eq_ignore_ascii_case("true") {
@@ -84,7 +84,7 @@ fn custom_icon_of(el: &Element) -> Option<Uuid> {
     uuid_of_text(el, "CustomIconUUID")
 }
 
-fn uuid_of_text(el: &Element, name: &str) -> Option<Uuid> {
+pub(crate) fn uuid_of_text(el: &Element, name: &str) -> Option<Uuid> {
     Uuid::from_base64(&el.child_text(name)?).filter(|u| !u.is_nil())
 }
 
@@ -554,11 +554,11 @@ impl<'a> Entry<'a> {
 
 // ---------------------------------------------------------------- editing
 
-fn now_text() -> String {
+pub(crate) fn now_text() -> String {
     Timestamp::now().to_base64()
 }
 
-fn set_child_text(el: &mut Element, name: &str, text: &str, after: &[&str]) {
+pub(crate) fn set_child_text(el: &mut Element, name: &str, text: &str, after: &[&str]) {
     match el.child_mut(name) {
         Some(c) => c.set_text(text),
         None => el.insert_element(Element::with_text(name, text), after, &[]),
@@ -734,7 +734,7 @@ impl EntryMut<'_> {
     }
 }
 
-fn times_element(now: &str) -> Element {
+pub(crate) fn times_element(now: &str) -> Element {
     let mut t = Element::new("Times");
     for (n, v) in [
         ("LastModificationTime", now),

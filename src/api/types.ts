@@ -149,7 +149,55 @@ export interface Settings {
   backupOnSave: boolean;
   /** unsaved edits when the database locks: save, or ask on a manual lock */
   lockUnsaved: LockUnsaved;
+  /** the password generator's last choices */
+  generator: GeneratorOptions;
 }
+
+export type GeneratorMode = 'password' | 'passphrase';
+
+export interface GeneratorOptions {
+  mode: GeneratorMode;
+  length: number;
+  lower: boolean;
+  upper: boolean;
+  digits: boolean;
+  symbols: boolean;
+  excludeLookAlike: boolean;
+  words: number;
+  separator: string;
+  capitalize: boolean;
+  addDigit: boolean;
+}
+
+export const DEFAULT_GENERATOR: GeneratorOptions = {
+  mode: 'password',
+  length: 20,
+  lower: true,
+  upper: true,
+  digits: true,
+  symbols: true,
+  excludeLookAlike: false,
+  words: 5,
+  separator: '-',
+  capitalize: false,
+  addDigit: false,
+};
+
+/** zxcvbn's estimate: 0 (guessed at once) to 4 (very hard). */
+export interface Strength {
+  score: number;
+  guessesLog10: number;
+}
+
+export interface Generated {
+  password: string;
+  /** entropy of the generator with these options */
+  bits: number;
+  strength: Strength;
+}
+
+/** What a delete did. */
+export type Deleted = 'toRecycleBin' | 'permanently';
 
 export type LockUnsaved = 'save' | 'ask';
 
@@ -183,6 +231,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autotypeKeyDelayMs: 20,
   backupOnSave: true,
   lockUnsaved: 'save',
+  generator: DEFAULT_GENERATOR,
 };
 
 // ---------------------------------------------------------------- editing
@@ -202,6 +251,8 @@ export interface EditableEntry {
   fields: EditableField[];
   /** TOTP settings without the secret; null when there is none */
   totp: TotpSummary | null;
+  icon: number;
+  customIcon: string | null;
 }
 
 export interface EditableField {
@@ -251,6 +302,8 @@ export interface EntryEdit {
   expires: string | null;
   fields: FieldEdit[];
   totp: TotpEdit;
+  /** a standard icon, 0–68; null leaves the icon as it is */
+  icon: number | null;
 }
 
 export interface SaveOptions {
@@ -305,6 +358,12 @@ export const ERROR_CODES = [
   'saveConflict',
   'saveFailed',
   'formatUpgrade',
+  'notAllowed',
+  'emptyName',
+  'fileExists',
+  'writeFailed',
+  'tooLarge',
+  'noCharacters',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

@@ -5,6 +5,7 @@ import { usePrefs } from '../app/contexts';
 import type { MessageKey } from '../i18n/core';
 import { AppMark } from './bits';
 import { Icon } from './Icon';
+import { NewDatabaseForm } from './NewDatabase';
 import { useDismiss } from './useDismiss';
 import { baseName } from '../text';
 
@@ -116,9 +117,11 @@ interface Props {
   /** compact form for the quick search box: password only */
   compact?: boolean;
   onUnlocked?: () => void;
+  /** "New database…" (main window only) */
+  onNew?: () => void;
 }
 
-export function UnlockForm({ status, compact, onUnlocked }: Props) {
+export function UnlockForm({ status, compact, onUnlocked, onNew }: Props) {
   const { t, info } = usePrefs();
   const texts = useDialogTexts();
   const [password, setPassword] = useState('');
@@ -265,12 +268,18 @@ export function UnlockForm({ status, compact, onUnlocked }: Props) {
       <button type="submit" className="btn primary unlock-submit" disabled={busy}>
         {busy ? t('unlock.unlocking') : t('unlock.submit')}
       </button>
+      {onNew && (
+        <button type="button" className="link-btn new-db-link" onClick={onNew}>
+          <Icon name="plus" />
+          {t('newdb.link')}
+        </button>
+      )}
     </form>
   );
 }
 
 /** First run, or every remembered file was removed: choose a database. */
-function Welcome() {
+function Welcome({ onNew }: { onNew: () => void }) {
   const { t } = usePrefs();
   const texts = useDialogTexts();
   const [error, setError] = useState<MessageKey | null>(null);
@@ -292,18 +301,32 @@ function Welcome() {
         <Icon name="folderOpen" />
         {t('unlock.openFile')}
       </button>
+      <button type="button" className="link-btn new-db-link" onClick={onNew}>
+        <Icon name="plus" />
+        {t('newdb.link')}
+      </button>
     </div>
   );
 }
 
 /** The locked state of the main window. */
 export function UnlockScreen({ status }: { status: VaultStatus }) {
+  const [creating, setCreating] = useState(false);
+  const startNew = () => setCreating(true);
   return (
     <main className="unlock-screen">
       <div className="unlock-hero">
         <AppMark size={64} />
       </div>
-      <div className="unlock-card">{status.path ? <UnlockForm status={status} /> : <Welcome />}</div>
+      <div className="unlock-card">
+        {creating ? (
+          <NewDatabaseForm onBack={() => setCreating(false)} />
+        ) : status.path ? (
+          <UnlockForm status={status} onNew={startNew} />
+        ) : (
+          <Welcome onNew={startNew} />
+        )}
+      </div>
     </main>
   );
 }

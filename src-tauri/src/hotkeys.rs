@@ -186,6 +186,12 @@ fn unregister(app: &AppHandle, h: &mut Inner) {
 
 fn register(app: &AppHandle, h: &mut Inner) -> Status {
     unregister(app, h);
+    // a test on another desktop must not react to the user's keys
+    if crate::windows::dev_quiet() {
+        log::info!("global hotkeys off: running on another desktop for a test");
+        h.status = Status::default();
+        return h.status;
+    }
     let gs = app.global_shortcut();
     let wanted = h.wanted.clone();
     let mut one = |action: Action, text: &str| -> State {

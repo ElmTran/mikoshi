@@ -2,6 +2,7 @@
 //! on the desktop shell so it can be tested on its own.
 
 pub mod autotype;
+pub mod generator;
 pub mod model;
 pub mod search;
 pub mod secret;
