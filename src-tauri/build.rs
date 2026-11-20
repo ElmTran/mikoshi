@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "search_entries",
     "get_entry",
     "get_entry_for_edit",
+    "check_autotype_sequence",
     "create_entry",
     "save_entry",
     "list_history",

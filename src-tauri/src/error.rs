@@ -79,6 +79,8 @@ pub enum AppError {
     AutotypeDisabled,
     #[error("the auto-type sequence cannot be typed")]
     AutotypeSequence,
+    #[error("an auto-type sequence in the editor cannot be typed")]
+    SequenceInvalid,
     #[error("the auto-type sequence uses a field the entry does not have")]
     AutotypeField,
     #[error("the window runs as administrator")]
@@ -145,6 +147,7 @@ impl From<mikoshi_core::vault::EditError> for AppError {
             E::Expiry => AppError::Expiry,
             E::RecycleBin | E::NotAllowed => AppError::NotAllowed,
             E::EmptyName => AppError::EmptyName,
+            E::AutotypeSequence => AppError::SequenceInvalid,
         }
     }
 }

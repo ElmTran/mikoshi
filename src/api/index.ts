@@ -14,6 +14,7 @@ import {
   type Deleted,
   type DialogText,
   type EditableEntry,
+  type SequenceProblem,
   type EntryDetail,
   type EntryEdit,
   type EntrySummary,
@@ -88,6 +89,8 @@ export const api = {
   revealField: (entryId: string, key: string) => call<string>('reveal_field', { entryId, key }),
   /** the entry with every value, for the editor; drop it when editing ends */
   getEntryForEdit: (entryId: string) => call<EditableEntry>('get_entry_for_edit', { entryId }),
+  checkAutotypeSequence: (sequence: string) =>
+    call<SequenceProblem | null>('check_autotype_sequence', { sequence }),
   /** creates an entry in a group; returns its id */
   createEntry: (groupId: string, edit: EntryEdit) => call<string>('create_entry', { groupId, edit }),
   /** applies an edit; false when it changed nothing */

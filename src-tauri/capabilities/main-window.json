@@ -27,6 +27,7 @@
     "allow-search-entries",
     "allow-get-entry",
     "allow-get-entry-for-edit",
+    "allow-check-autotype-sequence",
     "allow-create-entry",
     "allow-save-entry",
     "allow-list-history",

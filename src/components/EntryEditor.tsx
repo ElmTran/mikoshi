@@ -1,5 +1,14 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import type { EditableEntry, EntryEdit, FieldEdit, TotpEdit, TotpSummary } from '../api/types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api } from '../api';
+import type {
+  AssociationEdit,
+  EditableEntry,
+  EntryEdit,
+  FieldEdit,
+  SequenceProblem,
+  TotpEdit,
+  TotpSummary,
+} from '../api/types';
 import { usePrefs } from '../app/contexts';
 import { withShortcut } from '../shortcuts';
 import { GeneratorPanel } from './Generator';
@@ -47,7 +56,32 @@ interface Form {
   totpPeriod: number;
   /** a standard icon picked here; null leaves the icon as it is */
   icon: number | null;
+  autotypeOn: boolean;
+  /** empty: inherit */
+  sequence: string;
+  windows: AssociationEdit[];
 }
+
+/** KeePass's default, for a new entry (an existing one says what it inherits). */
+const DEFAULT_SEQUENCE = '{USERNAME}{TAB}{PASSWORD}{ENTER}';
+
+/** One click puts these at the cursor. */
+const SEQUENCE_CHIPS = [
+  '{USERNAME}',
+  '{PASSWORD}',
+  '{TAB}',
+  '{ENTER}',
+  '{TOTP}',
+  '{CLEARFIELD}',
+  '{DELAY 500}',
+];
+
+const PROBLEM_TEXT = {
+  unclosed: 'editor.autotype.problem.unclosed',
+  unopened: 'editor.autotype.problem.unopened',
+  danglingModifier: 'editor.autotype.problem.danglingModifier',
+  badNumber: 'editor.autotype.problem.badNumber',
+} as const;
 
 /** UTC ISO to the value a `datetime-local` input takes (local time). */
 function toLocalInput(iso: string | null): string {
@@ -84,7 +118,97 @@ function initial(entry: EditableEntry | null): Form {
     totpDigits: entry?.totp?.digits ?? 6,
     totpPeriod: entry?.totp?.period ?? 30,
     icon: null,
+    autotypeOn: entry?.autotype.enabled ?? true,
+    sequence: entry?.autotype.sequence ?? '',
+    windows: (entry?.autotype.associations ?? []).map((a) => ({ ...a })),
   };
+}
+
+/** Asks the Rust side what is wrong with each sequence, a moment after typing stops. */
+function useSequenceProblems(sequences: string[]): (SequenceProblem | null)[] {
+  const key = JSON.stringify(sequences);
+  const [problems, setProblems] = useState<(SequenceProblem | null)[]>([]);
+  useEffect(() => {
+    const list = JSON.parse(key) as string[];
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      void Promise.all(
+        list.map((s) => (s.trim() ? api.checkAutotypeSequence(s).catch(() => null) : null)),
+      ).then((r) => {
+        if (!stale) setProblems(r);
+      });
+    }, 250);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [key]);
+  return problems;
+}
+
+function ProblemText({ problem }: { problem: SequenceProblem | null | undefined }) {
+  const { t } = usePrefs();
+  if (!problem) return null;
+  const text =
+    problem.problem === 'unknown'
+      ? t('editor.autotype.problem.unknown', { name: '{' + problem.name + '}' })
+      : t(PROBLEM_TEXT[problem.problem]);
+  return (
+    <div className="ef-problem" role="alert">
+      <Icon name="warn" />
+      {text}
+    </div>
+  );
+}
+
+/** A sequence input; with chips, one-click placeholders under it. */
+function SequenceInput({
+  value,
+  onChange,
+  placeholder,
+  chips,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  chips?: boolean;
+  className?: string;
+}) {
+  const { t } = usePrefs();
+  const input = useRef<HTMLInputElement>(null);
+  const insert = (text: string) => {
+    const el = input.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    onChange(value.slice(0, start) + text + value.slice(end));
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(start + text.length, start + text.length);
+    });
+  };
+  return (
+    <>
+      <input
+        ref={input}
+        className={className ? 'seq-input ' + className : 'seq-input'}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        spellCheck={false}
+        autoComplete="off"
+      />
+      {chips && (
+        <div className="seq-chips" role="group" aria-label={t('editor.autotype.insert')}>
+          {SEQUENCE_CHIPS.map((c) => (
+            <button key={c} type="button" className="seq-chip" onClick={() => insert(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 function Summary({ totp }: { totp: TotpSummary }) {
@@ -171,9 +295,22 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
     }
   }, [form]);
 
+  const sequences = useMemo(
+    () => [form.sequence, ...form.windows.map((w) => w.sequence)],
+    [form.sequence, form.windows],
+  );
+  const problems = useSequenceProblems(sequences);
+  const setWindow = (i: number, patch: Partial<AssociationEdit>) =>
+    setForm((f) => ({ ...f, windows: f.windows.map((w, j) => (j === i ? { ...w, ...patch } : w)) }));
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
+    // the Rust side refuses these too; point at the field rather than a toast
+    if (problems.some(Boolean)) {
+      document.querySelector('.ef-problem')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     const fields: FieldEdit[] = form.fields.map((f) => ({
       original: f.original,
       key: f.key.trim(),
@@ -194,6 +331,13 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
       fields,
       totp,
       icon: form.icon,
+      autotype: {
+        enabled: form.autotypeOn,
+        sequence: form.sequence.trim(),
+        associations: form.windows
+          .map((w) => ({ window: w.window.trim(), sequence: w.sequence.trim() }))
+          .filter((w) => w.window),
+      },
     });
   };
 
@@ -464,6 +608,81 @@ export function EntryEditor({ entry, groupName, busy, onSave, onCancel }: Props)
               </div>
             </div>
           )}
+        </div>
+      </section>
+
+      <section className="detail-section">
+        <h2>{t('editor.autotype')}</h2>
+        <div className="autotype-editor">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={form.autotypeOn}
+              onChange={(e) => set('autotypeOn', e.target.checked)}
+            />
+            <span>{t('editor.autotype.enabled')}</span>
+          </label>
+          <div className={form.autotypeOn ? 'ef' : 'ef off'}>
+            <span>{t('editor.autotype.sequence')}</span>
+            <SequenceInput
+              value={form.sequence}
+              onChange={(v) => set('sequence', v)}
+              placeholder={entry?.autotype.inherited ?? DEFAULT_SEQUENCE}
+              chips
+            />
+            <ProblemText problem={problems[0]} />
+            <div className="ef-hint">
+              {t('editor.autotype.inherited', { sequence: entry?.autotype.inherited ?? DEFAULT_SEQUENCE })}
+              <br />
+              {t('editor.autotype.hint', { example: '{USERNAME}{TAB}{TAB}{PASSWORD}{ENTER}' })}
+            </div>
+          </div>
+
+          <div className={form.autotypeOn ? 'ef' : 'ef off'}>
+            <span>{t('editor.autotype.windows')}</span>
+            <div className="field-rows">
+              {form.windows.map((w, i) => (
+                <div className="window-rule" key={i}>
+                  <div className="field-row">
+                    <input
+                      className="fr-key"
+                      value={w.window}
+                      placeholder={t('editor.autotype.window')}
+                      onChange={(e) => setWindow(i, { window: e.target.value })}
+                      spellCheck={false}
+                    />
+                    <SequenceInput
+                      className="fr-value"
+                      value={w.sequence}
+                      placeholder={t('editor.autotype.windowSequence')}
+                      onChange={(v) => setWindow(i, { sequence: v })}
+                    />
+                    <button
+                      type="button"
+                      className="act"
+                      title={t('editor.autotype.removeWindow')}
+                      aria-label={t('editor.autotype.removeWindow')}
+                      onClick={() => setForm((f) => ({ ...f, windows: f.windows.filter((_, j) => j !== i) }))}
+                    >
+                      <Icon name="trash" />
+                    </button>
+                  </div>
+                  <ProblemText problem={problems[i + 1]} />
+                </div>
+              ))}
+              <button
+                type="button"
+                className="btn small"
+                onClick={() =>
+                  setForm((f) => ({ ...f, windows: [...f.windows, { window: '', sequence: '' }] }))
+                }
+              >
+                <Icon name="plus" />
+                {t('editor.autotype.addWindow')}
+              </button>
+              <div className="ef-hint">{t('editor.autotype.windowsHint')}</div>
+            </div>
+          </div>
         </div>
       </section>
     </form>

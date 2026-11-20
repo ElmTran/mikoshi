@@ -123,6 +123,8 @@ export const enUS: Record<MessageKey, string> = {
   'error.autotypeDisabled': 'Auto-type is turned off for this entry',
   'error.autotypeSequence':
     'The auto-type sequence of this entry has something that cannot be typed. Nothing was typed.',
+  'error.sequenceInvalid':
+    'An auto-type sequence has something that cannot be typed. Fix it under Auto-type.',
   'error.autotypeField': 'The auto-type sequence uses a field this entry does not have. Nothing was typed.',
   'error.autotypeElevated':
     'The window runs as administrator, and Windows does not let Mikoshi type into it. Copy and paste instead.',
@@ -197,6 +199,24 @@ export const enUS: Record<MessageKey, string> = {
   'editor.totp.algorithm': 'Algorithm',
   'editor.totp.digits': 'Digits',
   'editor.totp.period': 'Period (s)',
+  'editor.autotype': 'Auto-type',
+  'editor.autotype.enabled': 'Allow auto-type for this entry',
+  'editor.autotype.sequence': 'Sequence',
+  'editor.autotype.inherited': 'Empty: {sequence}',
+  'editor.autotype.hint': 'A button between the two fields? Press Tab twice: {example}',
+  'editor.autotype.insert': 'Insert',
+  'editor.autotype.windows': 'Window rules',
+  'editor.autotype.windowsHint':
+    'Matches windows by title and can use its own sequence. * stands for any text; //…// is a regular expression.',
+  'editor.autotype.window': 'Window title, e.g. *Sign in*',
+  'editor.autotype.windowSequence': 'Sequence (empty: the one above)',
+  'editor.autotype.addWindow': 'Add window rule',
+  'editor.autotype.removeWindow': 'Remove window rule',
+  'editor.autotype.problem.unknown': 'Mikoshi does not know {name}',
+  'editor.autotype.problem.unclosed': 'A { or ( is not closed',
+  'editor.autotype.problem.unopened': 'A ) has no ( before it',
+  'editor.autotype.problem.danglingModifier': '+ ^ % must come right before a key, not a field or the end',
+  'editor.autotype.problem.badNumber': 'A count or delay is not a number, or is too large',
   'editor.save': 'Save',
   'editor.cancel': 'Cancel',
   'editor.saving': 'Saving…',

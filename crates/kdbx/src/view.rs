@@ -650,6 +650,88 @@ impl EntryMut<'_> {
         true
     }
 
+    /// Sets the entry's auto-type settings: on or off, its own default
+    /// sequence (`None` or empty: inherit the groups'), and its window
+    /// associations, in order. Only what differs is touched; the rest of the
+    /// `AutoType` element (`DataTransferObfuscation`, anything unknown)
+    /// stays as it was.
+    pub fn set_autotype(
+        &mut self,
+        enabled: bool,
+        default_sequence: Option<&str>,
+        associations: &[Association],
+    ) {
+        let sequence = default_sequence.map(str::trim).filter(|s| !s.is_empty());
+        if self.el.child("AutoType").is_none() {
+            // no element means enabled, inherit, no associations
+            if enabled && sequence.is_none() && associations.is_empty() {
+                return;
+            }
+            let mut at = Element::new("AutoType");
+            at.children
+                .push(Node::Element(Element::with_text("Enabled", "True")));
+            at.children.push(Node::Element(Element::with_text(
+                "DataTransferObfuscation",
+                "0",
+            )));
+            self.el
+                .insert_element(at, &["String", "Binary"], &["History"]);
+        }
+        let at = self.el.child_mut("AutoType").expect("just ensured");
+
+        if opt_bool(at, "Enabled").unwrap_or(true) != enabled {
+            set_child_text(at, "Enabled", if enabled { "True" } else { "False" }, &[]);
+        }
+
+        let current = non_empty(at.child_text("DefaultSequence")).map(Cow::into_owned);
+        if current.as_deref() != sequence {
+            match sequence {
+                Some(s) => set_child_text(
+                    at,
+                    "DefaultSequence",
+                    s,
+                    &["Enabled", "DataTransferObfuscation"],
+                ),
+                None => {
+                    at.remove_child("DefaultSequence");
+                }
+            }
+        }
+
+        let current: Vec<Association> = at
+            .children_named("Association")
+            .map(|x| Association {
+                window: x.child_text("Window").unwrap_or_default().into_owned(),
+                sequence: x
+                    .child_text("KeystrokeSequence")
+                    .unwrap_or_default()
+                    .into_owned(),
+            })
+            .collect();
+        if current != associations {
+            while at.remove_child("Association").is_some() {}
+            for a in associations {
+                let mut el = Element::new("Association");
+                el.children
+                    .push(Node::Element(Element::with_text("Window", &a.window)));
+                el.children.push(Node::Element(Element::with_text(
+                    "KeystrokeSequence",
+                    &a.sequence,
+                )));
+                at.insert_element(
+                    el,
+                    &[
+                        "Enabled",
+                        "DataTransferObfuscation",
+                        "DefaultSequence",
+                        "Association",
+                    ],
+                    &[],
+                );
+            }
+        }
+    }
+
     /// Replaces the tags, separated by `;` as KeePassXC and KeePass 2.47+
     /// write them.
     pub fn set_tags(&mut self, tags: &[String]) {

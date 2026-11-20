@@ -180,6 +180,7 @@ pub fn run() {
             commands::search_entries,
             commands::get_entry,
             commands::get_entry_for_edit,
+            commands::check_autotype_sequence,
             commands::create_entry,
             commands::save_entry,
             commands::list_history,

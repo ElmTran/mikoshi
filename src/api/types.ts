@@ -291,7 +291,37 @@ export interface EditableEntry {
   totp: TotpSummary | null;
   icon: number;
   customIcon: string | null;
+  autotype: EditableAutotype;
 }
+
+/** An entry's auto-type settings (features.md §3.10). */
+export interface EditableAutotype {
+  enabled: boolean;
+  /** the entry's own sequence; empty when it inherits */
+  sequence: string;
+  /** what an empty sequence means: the groups' sequence or KeePass's default */
+  inherited: string;
+  associations: AssociationEdit[];
+}
+
+/** A window title pattern (`*` wildcards or `//regex//`) and its own sequence (empty: the entry's). */
+export interface AssociationEdit {
+  window: string;
+  sequence: string;
+}
+
+export interface AutotypeEdit {
+  enabled: boolean;
+  /** empty: inherit */
+  sequence: string;
+  /** rows with an empty window are dropped */
+  associations: AssociationEdit[];
+}
+
+/** Why a sequence cannot be typed; null from the check means it can. */
+export type SequenceProblem =
+  | { problem: 'unknown'; name: string }
+  | { problem: 'unclosed' | 'unopened' | 'danglingModifier' | 'badNumber' };
 
 export interface EditableField {
   key: string;
@@ -342,6 +372,8 @@ export interface EntryEdit {
   totp: TotpEdit;
   /** a standard icon, 0–68; null leaves the icon as it is */
   icon: number | null;
+  /** null leaves the auto-type settings as they are */
+  autotype: AutotypeEdit | null;
 }
 
 export interface SaveOptions {
@@ -384,6 +416,7 @@ export const ERROR_CODES = [
   'autostart',
   'autotypeDisabled',
   'autotypeSequence',
+  'sequenceInvalid',
   'autotypeField',
   'autotypeElevated',
   'autotypeNoWindow',

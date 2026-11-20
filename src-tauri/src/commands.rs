@@ -431,6 +431,39 @@ pub fn get_entry_for_edit(
     read(&state, |v| v.editable(&entry_id))
 }
 
+/// What is wrong with an auto-type sequence, for the editor to say while
+/// the user types it. No vault needed; the sequence is not a secret.
+#[derive(Debug, Serialize)]
+#[serde(tag = "problem", rename_all = "camelCase")]
+pub enum SequenceProblem {
+    /// `{…}` Mikoshi does not know; `name` is what was inside the braces
+    Unknown {
+        name: String,
+    },
+    Unclosed,
+    Unopened,
+    DanglingModifier,
+    BadNumber,
+}
+
+#[tauri::command]
+pub fn check_autotype_sequence(sequence: String) -> Option<SequenceProblem> {
+    use mikoshi_core::autotype::SequenceError as E;
+    let sequence = sequence.trim();
+    if sequence.is_empty() {
+        return None;
+    }
+    mikoshi_core::autotype::parse(sequence)
+        .err()
+        .map(|e| match e {
+            E::Unknown(name) => SequenceProblem::Unknown { name },
+            E::Unclosed => SequenceProblem::Unclosed,
+            E::Unopened => SequenceProblem::Unopened,
+            E::DanglingModifier => SequenceProblem::DanglingModifier,
+            E::BadNumber => SequenceProblem::BadNumber,
+        })
+}
+
 /// Creates an entry in a group and returns its id. Nothing is written to the
 /// file until `save_database`.
 #[tauri::command]

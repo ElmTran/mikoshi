@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-check-autotype-sequence"
+description = "Enables the check_autotype_sequence command without any pre-configured scope."
+commands.allow = ["check_autotype_sequence"]
+
+[[permission]]
+identifier = "deny-check-autotype-sequence"
+description = "Denies the check_autotype_sequence command without any pre-configured scope."
+commands.deny = ["check_autotype_sequence"]

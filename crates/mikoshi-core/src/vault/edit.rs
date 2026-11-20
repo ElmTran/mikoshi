@@ -38,6 +38,8 @@ pub enum EditError {
     NotAllowed,
     /// a group or attachment name that is empty
     EmptyName,
+    /// an auto-type sequence that cannot be typed (see `autotype::parse`)
+    AutotypeSequence,
 }
 
 // ---------------------------------------------------------------- to the editor
@@ -64,6 +66,30 @@ pub struct EditableEntry {
     pub icon: u32,
     /// custom icon id, shown instead of `icon`
     pub custom_icon: Option<String>,
+    pub autotype: EditableAutotype,
+}
+
+/// An entry's auto-type settings as the editor shows them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditableAutotype {
+    pub enabled: bool,
+    /// the entry's own sequence; empty when it inherits
+    pub sequence: String,
+    /// what an empty sequence means here: the groups' sequence or KeePass's
+    /// default
+    pub inherited: String,
+    pub associations: Vec<AssociationEdit>,
+}
+
+/// A window association: a window title pattern (`*` wildcards, or
+/// `//regex//`) and the sequence for it (empty: the entry's sequence).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssociationEdit {
+    pub window: String,
+    #[serde(default)]
+    pub sequence: String,
 }
 
 impl std::fmt::Debug for EditableEntry {
@@ -129,6 +155,22 @@ pub struct EntryEdit {
     /// a KeePass standard icon, 0–68; `None` leaves the icon as it is
     #[serde(default)]
     pub icon: Option<u32>,
+    /// `None` leaves the auto-type settings as they are
+    #[serde(default)]
+    pub autotype: Option<AutotypeEdit>,
+}
+
+/// The auto-type settings the editor wants.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutotypeEdit {
+    pub enabled: bool,
+    /// empty: inherit the groups' sequence
+    #[serde(default)]
+    pub sequence: String,
+    /// rows with an empty window are dropped
+    #[serde(default)]
+    pub associations: Vec<AssociationEdit>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,6 +278,13 @@ fn check(edit: &EntryEdit) -> Result<Checked<'_>, EditError> {
             Some(Some(uri))
         }
     };
+    if let Some(a) = &edit.autotype {
+        let sequences = std::iter::once(a.sequence.as_str())
+            .chain(a.associations.iter().map(|x| x.sequence.as_str()));
+        for seq in sequences.map(str::trim).filter(|s| !s.is_empty()) {
+            crate::autotype::parse(seq).map_err(|_| EditError::AutotypeSequence)?;
+        }
+    }
     Ok(Checked { edit, expires, otp })
 }
 
@@ -392,6 +441,19 @@ fn apply(e: &mut EntryMut<'_>, c: &Checked<'_>, protect: &dyn Fn(&str) -> bool) 
             }
         }
     }
+
+    if let Some(a) = &edit.autotype {
+        let associations: Vec<kdbx::Association> = a
+            .associations
+            .iter()
+            .filter(|x| !x.window.trim().is_empty())
+            .map(|x| kdbx::Association {
+                window: x.window.trim().to_string(),
+                sequence: x.sequence.trim().to_string(),
+            })
+            .collect();
+        e.set_autotype(a.enabled, Some(&a.sequence), &associations);
+    }
 }
 
 impl Vault {
@@ -474,7 +536,34 @@ impl Vault {
                 })
                 .collect(),
             totp,
+            autotype: self.editable_autotype(&e, group),
         })
+    }
+
+    fn editable_autotype(&self, e: &kdbx::Entry<'_>, group: usize) -> EditableAutotype {
+        let at = e.autotype();
+        EditableAutotype {
+            enabled: at.as_ref().is_none_or(|a| a.enabled),
+            sequence: at
+                .as_ref()
+                .and_then(|a| a.default_sequence.clone())
+                .unwrap_or_default(),
+            inherited: self.groups[group]
+                .sequence
+                .clone()
+                .unwrap_or_else(|| crate::autotype::DEFAULT_SEQUENCE.to_string()),
+            associations: at
+                .map(|a| {
+                    a.associations
+                        .into_iter()
+                        .map(|x| AssociationEdit {
+                            window: x.window,
+                            sequence: x.sequence,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
     }
 
     /// Applies an edit. The old version goes into the history first. Returns

@@ -33,6 +33,7 @@ interface DemoEntry {
   notes?: string;
   fields?: { key: string; value: string; protected: boolean }[];
   attachments?: { name: string; size: number }[];
+  autotype?: { enabled: boolean; sequence: string; associations: { window: string; sequence: string }[] };
 }
 
 const data = demo as {
@@ -139,6 +140,11 @@ function applyEdit(e: DemoEntry, edit: EntryEdit) {
   e.tags = edit.tags;
   e.expires = edit.expires;
   e.fields = edit.fields.map((f) => ({ key: f.key, value: f.value, protected: f.protected }));
+  if (edit.autotype)
+    e.autotype = {
+      ...edit.autotype,
+      associations: edit.autotype.associations.filter((x) => x.window.trim()),
+    };
   if (edit.totp.kind === 'remove') e.otp = false;
   else if (edit.totp.kind !== 'unchanged') e.otp = true;
   e.modified = now();
@@ -159,7 +165,26 @@ function editable(e: DemoEntry): EditableEntry {
     totp: e.otp ? { valid: true, algorithm: 'SHA1', digits: 6, period: 30, steam: false } : null,
     icon: ICONS[e.id] ?? 0,
     customIcon: null,
+    autotype: {
+      enabled: e.autotype?.enabled ?? true,
+      sequence: e.autotype?.sequence ?? '',
+      inherited: '{USERNAME}{TAB}{PASSWORD}{ENTER}',
+      associations: (e.autotype?.associations ?? []).map((x) => ({ ...x })),
+    },
   };
+}
+
+/** A rough stand-in for the Rust parser: braces must close and name something known. */
+function checkSequence(
+  sequence: string,
+): { problem: 'unknown'; name: string } | { problem: 'unclosed' } | null {
+  const known =
+    /^(USERNAME|PASSWORD|URL|TITLE|NOTES|TOTP|TIMEOTP|TAB|ENTER|SPACE|CLEARFIELD|BACKSPACE|BS|DEL|DELETE|HOME|END|UP|DOWN|LEFT|RIGHT|ESC|GROUP|UUID|S:.*|DELAY[ =]d+|TAB d+|[+^%~(){}[]])$/i;
+  for (const m of sequence.matchAll(/{([^}]*)}?/g)) {
+    if (!m[0].endsWith('}')) return { problem: 'unclosed' };
+    if (!known.test(m[1] ?? '')) return { problem: 'unknown', name: m[1] ?? '' };
+  }
+  return null;
 }
 
 function detailOf(e: DemoEntry): EntryDetail {
@@ -372,6 +397,8 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
         return detailOf(find(a.id ?? ''));
       case 'get_entry_for_edit':
         return editable(find(a.entryId ?? ''));
+      case 'check_autotype_sequence':
+        return checkSequence(String(args.sequence ?? ''));
       case 'create_entry': {
         open();
         const edit = args.edit as EntryEdit;

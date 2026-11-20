@@ -1,7 +1,7 @@
 //! Editing and saving, against copies of the test databases in a temporary
 //! directory: a save replaces the file it writes.
 
-use super::edit::{EntryEdit, FieldEdit, TotpEdit};
+use super::edit::{AssociationEdit, AutotypeEdit, EntryEdit, FieldEdit, TotpEdit};
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -56,6 +56,7 @@ fn edit_of(v: &Vault, id: &str) -> EntryEdit {
             .collect(),
         totp: TotpEdit::Unchanged,
         icon: None,
+        autotype: None,
     }
 }
 
@@ -71,6 +72,7 @@ fn new_edit(title: &str) -> EntryEdit {
         fields: Vec::new(),
         totp: TotpEdit::Unchanged,
         icon: None,
+        autotype: None,
     }
 }
 
@@ -744,4 +746,129 @@ fn an_edit_made_while_saving_stays_unsaved() {
     v.save(SaveOptions::default()).unwrap();
     assert!(!v.is_dirty());
     assert_eq!(reopened(&v).entry(&id).unwrap().title, "Second");
+}
+
+#[test]
+fn autotype_settings_save_and_read_back() {
+    let (dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let id = first_entry(&v);
+    let before = v.editable(&id).unwrap().autotype;
+    assert!(before.enabled);
+    assert_eq!(before.inherited, "{USERNAME}{TAB}{PASSWORD}{ENTER}");
+
+    let mut e = edit_of(&v, &id);
+    e.autotype = Some(AutotypeEdit {
+        enabled: true,
+        sequence: "{USERNAME}{TAB}{TAB}{PASSWORD}{ENTER}".into(),
+        associations: vec![
+            AssociationEdit {
+                window: "*Example*".into(),
+                sequence: String::new(),
+            },
+            // dropped: no window
+            AssociationEdit {
+                window: "  ".into(),
+                sequence: "{PASSWORD}".into(),
+            },
+            AssociationEdit {
+                window: "//Login - .*//".into(),
+                sequence: "{CLEARFIELD}{PASSWORD}{ENTER}".into(),
+            },
+        ],
+    });
+    assert!(v.update_entry(&id, &e).unwrap());
+    // the same settings again change nothing
+    assert!(!v.update_entry(&id, &e).unwrap());
+    v.save(SaveOptions::default()).unwrap();
+
+    let again = reopened(&v);
+    let at = again.editable(&id).unwrap().autotype;
+    assert!(at.enabled);
+    assert_eq!(at.sequence, "{USERNAME}{TAB}{TAB}{PASSWORD}{ENTER}");
+    assert_eq!(
+        at.associations,
+        [
+            AssociationEdit {
+                window: "*Example*".into(),
+                sequence: String::new(),
+            },
+            AssociationEdit {
+                window: "//Login - .*//".into(),
+                sequence: "{CLEARFIELD}{PASSWORD}{ENTER}".into(),
+            },
+        ]
+    );
+    // what auto-type will type
+    assert_eq!(
+        again
+            .autotype_sequence(&id, "Example login")
+            .unwrap()
+            .unwrap(),
+        "{USERNAME}{TAB}{TAB}{PASSWORD}{ENTER}"
+    );
+    assert_eq!(
+        again
+            .autotype_sequence(&id, "Login - site")
+            .unwrap()
+            .unwrap(),
+        "{CLEARFIELD}{PASSWORD}{ENTER}"
+    );
+
+    // back to inheriting, no associations, turned off
+    let mut v = again;
+    let mut e = edit_of(&v, &id);
+    e.autotype = Some(AutotypeEdit {
+        enabled: false,
+        sequence: String::new(),
+        associations: Vec::new(),
+    });
+    assert!(v.update_entry(&id, &e).unwrap());
+    let at = v.editable(&id).unwrap().autotype;
+    assert!(!at.enabled);
+    assert_eq!(at.sequence, "");
+    assert!(at.associations.is_empty());
+    assert!(v.autotype_sequence(&id, "anything").unwrap().is_err());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_sequence_that_cannot_be_typed_is_refused() {
+    let (dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let id = first_entry(&v);
+    for (sequence, window_sequence) in [("{NOPE}", ""), ("", "{USERNAME")] {
+        let mut e = edit_of(&v, &id);
+        e.autotype = Some(AutotypeEdit {
+            enabled: true,
+            sequence: sequence.into(),
+            associations: vec![AssociationEdit {
+                window: "*x*".into(),
+                sequence: window_sequence.into(),
+            }],
+        });
+        assert_eq!(v.update_entry(&id, &e), Err(EditError::AutotypeSequence));
+    }
+    assert!(!v.is_dirty());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn leaving_autotype_out_keeps_it() {
+    let (dir, mut v) = fresh("kxc/kdbx41-pw.kdbx");
+    let id = first_entry(&v);
+    let mut e = edit_of(&v, &id);
+    e.autotype = Some(AutotypeEdit {
+        enabled: true,
+        sequence: "{PASSWORD}{ENTER}".into(),
+        associations: Vec::new(),
+    });
+    v.update_entry(&id, &e).unwrap();
+    let mut e = edit_of(&v, &id);
+    e.title = "Renamed".into();
+    assert!(e.autotype.is_none());
+    v.update_entry(&id, &e).unwrap();
+    assert_eq!(
+        v.editable(&id).unwrap().autotype.sequence,
+        "{PASSWORD}{ENTER}"
+    );
+    let _ = fs::remove_dir_all(dir);
 }
