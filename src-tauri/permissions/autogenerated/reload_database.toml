@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reload-database"
+description = "Enables the reload_database command without any pre-configured scope."
+commands.allow = ["reload_database"]
+
+[[permission]]
+identifier = "deny-reload-database"
+description = "Denies the reload_database command without any pre-configured scope."
+commands.deny = ["reload_database"]

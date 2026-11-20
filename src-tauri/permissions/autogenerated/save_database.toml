@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-database"
+description = "Enables the save_database command without any pre-configured scope."
+commands.allow = ["save_database"]
+
+[[permission]]
+identifier = "deny-save-database"
+description = "Denies the save_database command without any pre-configured scope."
+commands.deny = ["save_database"]

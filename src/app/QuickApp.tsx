@@ -41,6 +41,8 @@ export function QuickApp() {
     void loadStatus();
     const offs = [
       listen<VaultStatus>('vault-changed', setStatus),
+      // an edit changes what the search finds
+      listen<VaultStatus>('vault-edited', () => setOpened((n) => n + 1)),
       listen<QuickShown>('quick-shown', (shown) => {
         // ask again each time: a failed first call must not leave the box empty
         void loadStatus();

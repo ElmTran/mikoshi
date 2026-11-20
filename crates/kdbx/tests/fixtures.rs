@@ -285,3 +285,145 @@ fn edits_change_only_their_nodes() {
     );
     assert!(*again.document() == before);
 }
+
+fn set_meta(db: &mut Database, name: &str, value: &str) {
+    let meta = db.meta_element_mut().unwrap();
+    match meta.child_mut(name) {
+        Some(e) => e.set_text(value),
+        None => meta.insert_element(kdbx::xml::Element::with_text(name, value), &[], &[]),
+    }
+}
+
+fn history_titles(db: &Database, id: kdbx::Uuid) -> Vec<String> {
+    db.entry(id)
+        .unwrap()
+        .history()
+        .map(|h| h.get("Title").unwrap_or_default().into_owned())
+        .collect()
+}
+
+#[test]
+fn history_is_trimmed_to_the_database_limits() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    set_meta(&mut db, "HistoryMaxItems", "3");
+    set_meta(&mut db, "HistoryMaxSize", "-1");
+    let id = entry_titled(&db, "Full Fields").uuid().unwrap();
+    let before = history_titles(&db, id).len();
+    for i in 0..5 {
+        let mut e = db.entry_mut(id).unwrap();
+        e.push_history();
+        e.set_field("Title", &format!("v{i}"), false);
+        db.maintain_history(id);
+    }
+    // oldest go first; the newest three remain
+    let h = history_titles(&db, id);
+    assert_eq!(h.len(), 3, "had {before} before");
+    assert_eq!(h, ["v1", "v2", "v3"]);
+    assert_eq!(history_titles(&reopen(&db), id), h);
+
+    // no limit on the count, a small one on the size
+    set_meta(&mut db, "HistoryMaxItems", "-1");
+    set_meta(&mut db, "HistoryMaxSize", "0");
+    db.maintain_history(id);
+    assert!(history_titles(&db, id).is_empty());
+
+    // HistoryMaxItems 0 keeps no history at all
+    set_meta(&mut db, "HistoryMaxSize", "-1");
+    set_meta(&mut db, "HistoryMaxItems", "0");
+    db.entry_mut(id).unwrap().push_history();
+    assert_eq!(db.maintain_history(id), 1);
+}
+
+#[test]
+fn restoring_history_keeps_the_current_version() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    set_meta(&mut db, "HistoryMaxItems", "10");
+    let id = entry_titled(&db, "Full Fields").uuid().unwrap();
+    let original_pw = db.entry(id).unwrap().get("Password").unwrap().into_owned();
+    let n = history_titles(&db, id).len();
+    {
+        let mut e = db.entry_mut(id).unwrap();
+        e.push_history();
+        e.set_field("Title", "Changed", false);
+        e.set_field("Password", "new-secret", true);
+        e.touch();
+    }
+    assert!(db.restore_history(id, n));
+    let e = db.entry(id).unwrap();
+    assert_eq!(e.get("Title").as_deref(), Some("Full Fields"));
+    assert_eq!(e.get("Password").as_deref(), Some(original_pw.as_str()));
+    assert!(e.field("Password").unwrap().protected());
+    // the version that was current is now the newest history item
+    let h: Vec<_> = e.history().collect();
+    assert_eq!(h.len(), n + 2);
+    assert_eq!(h[n + 1].get("Title").as_deref(), Some("Changed"));
+    assert_eq!(h[n + 1].get("Password").as_deref(), Some("new-secret"));
+    assert!(h.iter().all(|v| v.element().child("History").is_none()));
+    assert_eq!(e.uuid(), Some(id));
+
+    let again = reopen(&db);
+    assert!(again.document() == db.document());
+    assert!(!db.restore_history(id, 999));
+}
+
+#[test]
+fn renames_tags_and_expiry_are_saved() {
+    const STANDARD: [&str; 5] = ["Title", "UserName", "Password", "URL", "Notes"];
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    let id = db
+        .entries()
+        .into_iter()
+        .find(|e| e.fields().any(|f| !STANDARD.contains(&f.key().as_ref())))
+        .expect("an entry with a custom field")
+        .uuid()
+        .unwrap();
+    let keys: Vec<String> = db
+        .entry(id)
+        .unwrap()
+        .fields()
+        .map(|f| f.key().into_owned())
+        .collect();
+    let custom = keys
+        .iter()
+        .find(|k| !STANDARD.contains(&k.as_str()))
+        .expect("a custom field")
+        .clone();
+    let when = kdbx::Timestamp::from_unix(2_000_000_000);
+    {
+        let mut e = db.entry_mut(id).unwrap();
+        assert!(e.rename_field(&custom, "Renamed"));
+        assert!(!e.rename_field("Renamed", "Title"));
+        assert!(!e.rename_field("no such field", "x"));
+        e.set_tags(&["one".into(), " two ".into(), "".into()]);
+        e.set_expiry(Some(when));
+    }
+    let again = reopen(&db);
+    let e = again.entry(id).unwrap();
+    let renamed: Vec<String> = e.fields().map(|f| f.key().into_owned()).collect();
+    let pos = keys.iter().position(|k| *k == custom).unwrap();
+    assert_eq!(renamed[pos], "Renamed", "renamed in place");
+    assert_eq!(e.tags(), ["one", "two"]);
+    assert_eq!(e.times().expires_at(), Some(when));
+
+    let mut db = again;
+    db.entry_mut(id).unwrap().set_expiry(None);
+    db.entry_mut(id).unwrap().set_tags(&[]);
+    let e = db.entry(id).unwrap();
+    assert_eq!(e.times().expires_at(), None);
+    assert_eq!(e.times().expiry, Some(when), "the old time is kept");
+    assert!(e.tags().is_empty());
+}
+
+#[test]
+fn a_new_entry_with_an_empty_protected_password_round_trips() {
+    let mut db = open("kxc/kdbx41-pw.kdbx");
+    let root = db.root_group().unwrap().uuid().unwrap();
+    let id = db.add_entry(root).unwrap();
+    db.entry_mut(id).unwrap().set_field("Title", "New", false);
+    let again = reopen(&db);
+    assert!(again.document() == db.document());
+    assert_eq!(
+        again.entry(id).unwrap().get("Password").as_deref(),
+        Some("")
+    );
+}

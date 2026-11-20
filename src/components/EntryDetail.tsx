@@ -11,6 +11,7 @@ export interface DetailActions {
   openUrl: () => void;
   autotype: () => void;
   edit: () => void;
+  history: () => void;
   exportAttachment: (name: string) => void;
 }
 
@@ -176,6 +177,9 @@ export function EntryDetail({ entry, revealed, copied, actions }: Props) {
           >
             <Icon name="keyboard" />
             {t('detail.autotype')}
+          </button>
+          <button className="btn" title={t('history.title')} onClick={actions.history}>
+            <Icon name="clock" />
           </button>
           <button className="btn" title={`${t('detail.edit')} (Ctrl+E)`} onClick={actions.edit}>
             <Icon name="edit" />

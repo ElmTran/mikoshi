@@ -22,6 +22,8 @@ pub struct VaultStatus {
     pub name: String,
     /// the key file remembered for this database, to fill in the unlock form
     pub key_file: Option<String>,
+    /// edits not saved yet (M7); the title bar shows a dot for this
+    pub dirty: bool,
 }
 
 #[derive(Default)]
@@ -60,6 +62,7 @@ impl Session {
                 (None, None) => String::new(),
             },
             key_file,
+            dirty: self.open.as_ref().is_some_and(Vault::is_dirty),
         }
     }
 }
@@ -79,10 +82,19 @@ pub fn status_of(state: &AppState) -> Option<VaultStatus> {
     Some(state.vault.lock().ok()?.status(key_file))
 }
 
-/// Locks: drops the decrypted database, removes a copied secret from the
-/// clipboard if it is still there, and tells every window. Used by the lock
-/// command and by auto-lock (idle, Win+L, sleep, minimize).
+/// Locks: saves unsaved edits (unless `save` is false), drops the decrypted
+/// database, removes a copied secret from the clipboard if it is still there,
+/// and tells every window. Used by the lock command, the tray and auto-lock
+/// (idle, Win+L, sleep, minimize).
 pub fn lock_app(app: &AppHandle, reason: &str) {
+    lock_app_with(app, reason, true);
+}
+
+/// [`lock_app`], where `save == false` drops unsaved edits instead.
+pub fn lock_app_with(app: &AppHandle, reason: &str, save: bool) {
+    if save {
+        note_conflict_copy(app, save_before_leaving(app));
+    }
     let state = app.state::<AppState>();
     let was_open = match state.vault.lock() {
         Ok(mut s) => {
@@ -97,6 +109,83 @@ pub fn lock_app(app: &AppHandle, reason: &str) {
         log::info!("database locked ({reason})");
         if let Some(status) = status_of(&state) {
             let _ = app.emit("vault-changed", &status);
+        }
+    }
+}
+
+/// Tells the windows where edits went when they could not be saved over the
+/// file itself. The path is not a secret (it is on the recent list anyway).
+fn note_conflict_copy(app: &AppHandle, path: Option<std::path::PathBuf>) {
+    if let Some(path) = path {
+        let path = path.to_string_lossy().into_owned();
+        let _ = app.emit("save-conflict-copy", &path);
+    }
+}
+
+/// Whether the database has unsaved edits the user has to decide about:
+/// the setting says "ask" and there are edits not saved yet.
+pub fn needs_answer(state: &AppState) -> bool {
+    let ask = state
+        .settings
+        .lock()
+        .is_ok_and(|s| s.current.lock_unsaved == crate::settings::LockUnsaved::Ask);
+    ask && is_dirty(state)
+}
+
+/// Before leaving a database: saves unsaved edits unless they were to be
+/// discarded, and tells the windows about a conflict copy.
+pub fn leave(app: &AppHandle, discard: bool) {
+    if !discard {
+        note_conflict_copy(app, save_before_leaving(app));
+    }
+}
+
+/// Whether the open database has edits not saved yet.
+pub fn is_dirty(state: &AppState) -> bool {
+    state
+        .vault
+        .lock()
+        .is_ok_and(|s| s.open.as_ref().is_some_and(Vault::is_dirty))
+}
+
+/// Saves the open database's unsaved edits before it is dropped, for an
+/// automatic lock, quitting or switching databases, where nobody can be
+/// asked. A conflict with someone else's change to the file is not
+/// overwritten: the edits go to a separate file (see
+/// `Vault::save_conflict_copy`) and its path is returned so the user can be
+/// told. Failures are logged; the caller goes ahead either way.
+pub fn save_before_leaving(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let state = app.state::<AppState>();
+    let backup = state
+        .settings
+        .lock()
+        .is_ok_and(|s| s.current.backup_on_save);
+    let mut s = state.vault.lock().ok()?;
+    let vault = s.open.as_mut()?;
+    if !vault.is_dirty() {
+        return None;
+    }
+    match vault.save(mikoshi_core::vault::SaveOptions {
+        backup,
+        ..Default::default()
+    }) {
+        Ok(()) => {
+            log::info!("unsaved edits saved before leaving");
+            None
+        }
+        Err(mikoshi_core::vault::SaveError::Conflict) => match vault.save_conflict_copy() {
+            Ok(path) => {
+                log::info!("the file changed elsewhere; edits saved to a separate file");
+                Some(path)
+            }
+            Err(e) => {
+                log::warn!("edits could not be saved anywhere: {e:?}");
+                None
+            }
+        },
+        Err(e) => {
+            log::warn!("edits could not be saved: {e:?}");
+            None
         }
     }
 }

@@ -11,11 +11,13 @@ interface Props {
   /** the search box, placed in the middle of the title bar */
   center?: ReactNode;
   onQuickSearch?: () => void;
+  /** shows a save button; called by Ctrl+S and the button */
+  onSave?: (() => void) | undefined;
   onLock?: () => void;
 }
 
 /** Custom title bar: drag area, file name, actions and the caption buttons. */
-export function TitleBar({ fileName, dirty, center, onQuickSearch, onLock }: Props) {
+export function TitleBar({ fileName, dirty, center, onQuickSearch, onSave, onLock }: Props) {
   const { t, info } = usePrefs();
   const [maximized, setMaximized] = useState(false);
 
@@ -55,6 +57,12 @@ export function TitleBar({ fileName, dirty, center, onQuickSearch, onLock }: Pro
             onClick={onQuickSearch}
           >
             <Icon name="bolt" />
+          </button>
+        )}
+        {onSave && (
+          <button className="tb-btn save" title={`${t('editor.save')} (Ctrl+S)`} onClick={onSave}>
+            <Icon name="check" />
+            <span>{t('editor.save')}</span>
           </button>
         )}
         <SettingsButton />

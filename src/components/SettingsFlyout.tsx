@@ -160,6 +160,23 @@ export function SettingsButton() {
               hint={t('settings.lockOnMinimizeHint')}
               onToggle={() => void update({ lockOnMinimize: !settings.lockOnMinimize })}
             />
+            <label className="select-row" title={t('settings.lockUnsavedHint')}>
+              <span>{t('settings.lockUnsaved')}</span>
+              <select
+                className="select"
+                value={settings.lockUnsaved}
+                onChange={(e) => void update({ lockUnsaved: e.target.value === 'ask' ? 'ask' : 'save' })}
+              >
+                <option value="save">{t('settings.lockUnsaved.save')}</option>
+                <option value="ask">{t('settings.lockUnsaved.ask')}</option>
+              </select>
+            </label>
+            <Switch
+              on={settings.backupOnSave}
+              label={t('settings.backupOnSave')}
+              hint={t('settings.backupOnSaveHint')}
+              onToggle={() => void update({ backupOnSave: !settings.backupOnSave })}
+            />
             <Switch
               on={settings.rememberKeyFiles}
               label={t('settings.rememberKeyFiles')}

@@ -26,8 +26,12 @@ export function MainApp() {
 
   useEffect(() => {
     load();
-    const off = listen<VaultStatus>('vault-changed', setStatus);
-    return () => void off.then((f) => f());
+    const offs = [
+      listen<VaultStatus>('vault-changed', setStatus),
+      // edits change the unsaved mark in the title bar
+      listen<VaultStatus>('vault-edited', setStatus),
+    ];
+    return () => offs.forEach((p) => void p.then((f) => f()));
   }, [load]);
 
   // auto-type that failed after Mikoshi got out of the way

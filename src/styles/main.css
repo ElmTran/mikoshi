@@ -1504,3 +1504,265 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
+/* ---------------------------------------------------------------- editing */
+
+.detail-scroll.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.editor-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.ef {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.ef.small {
+  flex: 0 0 auto;
+}
+
+.ef input,
+.ef textarea,
+.ef select,
+.field-row input {
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--control);
+  border: 1px solid var(--control-stroke);
+  border-bottom-color: var(--control-stroke-bottom);
+  border-radius: var(--r-control);
+  padding: 6px 8px;
+  outline: none;
+}
+
+.ef input:focus,
+.ef textarea:focus,
+.ef select:focus,
+.field-row input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.ef textarea {
+  resize: vertical;
+}
+
+.ef-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ef-row input {
+  flex: 1;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.field-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(120px, 2fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.btn.small {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: var(--fs-caption);
+}
+
+.totp-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.totp-now {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.seg {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.seg > button {
+  font: inherit;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  background: var(--control);
+  border: 1px solid var(--control-stroke);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.seg > button.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.seg > button.on.danger {
+  color: var(--danger, #c42b1c);
+  border-color: var(--danger, #c42b1c);
+}
+
+.totp-new {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--divider);
+  padding-top: 12px;
+}
+
+.totp-or {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* ---------------------------------------------------------------- dialogs */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border-radius: var(--r-layer);
+  background: var(--card);
+  border: 1px solid var(--card-stroke);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
+.dialog.history {
+  width: min(860px, calc(100vw - 48px));
+}
+
+.dialog-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-subtitle);
+  font-weight: 600;
+  margin: 0;
+}
+
+.dialog-body {
+  color: var(--text-2);
+  overflow: auto;
+}
+
+.dialog-hint {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn.danger {
+  color: var(--danger, #c42b1c);
+}
+
+.history-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 14px;
+  min-height: 280px;
+  max-height: 56vh;
+  overflow: hidden;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  border-right: 1px solid var(--divider);
+}
+
+.history-list button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: var(--r-control);
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-list button:hover {
+  background: var(--subtle-hover);
+}
+
+.history-list button.on {
+  background: var(--subtle-selected);
+}
+
+.h-date {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.history-view {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hv-head .detail-title {
+  font-size: var(--fs-subtitle);
+}

@@ -36,6 +36,18 @@ pub enum AppError {
     NotKeePass,
     #[error("the TOTP settings of this entry cannot be used")]
     TotpInvalid,
+    #[error("a custom field name is empty, used twice or reserved")]
+    FieldName,
+    #[error("the expiry time cannot be used")]
+    Expiry,
+    #[error("the database has edits not saved yet")]
+    UnsavedChanges,
+    #[error("the file was changed by another program")]
+    SaveConflict,
+    #[error("the database cannot be written")]
+    SaveFailed,
+    #[error("saving turns the file into KDBX 4.1")]
+    FormatUpgrade,
     #[error("only http and https URLs are opened")]
     UnsafeUrl,
     #[error("the clipboard could not be written")]
@@ -86,3 +98,27 @@ impl From<OpenError> for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+impl From<mikoshi_core::vault::SaveError> for AppError {
+    fn from(e: mikoshi_core::vault::SaveError) -> Self {
+        use mikoshi_core::vault::SaveError as S;
+        match e {
+            S::Conflict => AppError::SaveConflict,
+            S::FormatUpgrade => AppError::FormatUpgrade,
+            S::Encrypt | S::Write => AppError::SaveFailed,
+        }
+    }
+}
+
+impl From<mikoshi_core::vault::EditError> for AppError {
+    fn from(e: mikoshi_core::vault::EditError) -> Self {
+        use mikoshi_core::vault::EditError as E;
+        match e {
+            E::NotFound => AppError::NotFound,
+            E::FieldName => AppError::FieldName,
+            E::TotpInvalid => AppError::TotpInvalid,
+            E::Expiry => AppError::Expiry,
+            E::RecycleBin => AppError::NotFound,
+        }
+    }
+}

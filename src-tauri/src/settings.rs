@@ -53,6 +53,16 @@ pub enum SortKey {
     Modified,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LockUnsaved {
+    /// save before locking (automatic locks always do)
+    #[default]
+    Save,
+    /// ask on a manual lock; automatic locks save anyway
+    Ask,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct EntrySort {
@@ -95,6 +105,10 @@ pub struct Settings {
     pub autotype_hotkey: String,
     /// milliseconds between auto-typed keys
     pub autotype_key_delay_ms: u32,
+    /// keep the previous file as `NAME.bak` before each save
+    pub backup_on_save: bool,
+    /// what happens to unsaved edits when the database is locked
+    pub lock_unsaved: LockUnsaved,
 }
 
 impl Default for Settings {
@@ -114,6 +128,8 @@ impl Default for Settings {
             lock_hotkey: "Ctrl+Alt+L".into(),
             autotype_hotkey: "Ctrl+Alt+V".into(),
             autotype_key_delay_ms: 20,
+            backup_on_save: true,
+            lock_unsaved: LockUnsaved::default(),
         }
     }
 }

@@ -6,6 +6,9 @@ use std::sync::MutexGuard;
 
 use mikoshi_core::model::{CustomIconView, EntryDetail, EntrySummary, GroupView, TotpView};
 use mikoshi_core::totp::TotpError;
+use mikoshi_core::vault::{
+    EditError, EditableEntry, EntryEdit, HistoryItem, SaveError, SaveOptions,
+};
 use mikoshi_core::{Credentials, Secret, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -77,6 +80,23 @@ fn read<T>(state: &State<'_, AppState>, f: impl FnOnce(&Vault) -> Option<T>) -> 
     let s = session(state)?;
     let vault = s.open.as_ref().ok_or(AppError::Locked)?;
     f(vault).ok_or(AppError::NotFound)
+}
+
+/// Runs an edit on the unlocked database and tells the windows the views
+/// changed. `Err` from `f` changes nothing.
+fn edit_vault<T>(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    f: impl FnOnce(&mut Vault) -> Result<T, EditError>,
+) -> AppResult<T> {
+    let out = {
+        let mut s = session(state)?;
+        let vault = s.open.as_mut().ok_or(AppError::Locked)?;
+        f(vault)?
+    };
+    let status = status_of(state)?;
+    let _ = app.emit("vault-edited", &status);
+    Ok(out)
 }
 
 #[tauri::command]
@@ -162,12 +182,21 @@ fn select(app: &AppHandle, state: &State<'_, AppState>, path: PathBuf) -> AppRes
 }
 
 /// Points the unlock screen at a database, e.g. one from the recent list.
+/// With unsaved edits, `discard` says they may be dropped; the setting
+/// "save before locking" saves them instead (a change made elsewhere by
+/// another program gets a separate file, see `session::save_before_leaving`).
 #[tauri::command]
 pub fn select_database(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
+    discard: Option<bool>,
 ) -> AppResult<VaultStatus> {
+    let discard = discard.unwrap_or(false);
+    if session::needs_answer(&state) && !discard {
+        return Err(AppError::UnsavedChanges);
+    }
+    session::leave(&app, discard);
     select(&app, &state, PathBuf::from(path))
 }
 
@@ -285,11 +314,39 @@ pub async fn unlock(
 }
 
 /// Locks: drops the decrypted database. Every window goes back to its
-/// unlock form and forgets what it showed.
+/// unlock form and forgets what it showed. With unsaved edits, `discard`
+/// says they may be dropped; otherwise the setting decides (save, or ask
+/// with `UnsavedChanges` so the UI can offer the three choices).
 #[tauri::command]
-pub fn lock(app: AppHandle, state: State<'_, AppState>) -> AppResult<VaultStatus> {
-    session::lock_app(&app, "by the user");
+pub fn lock(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    discard: Option<bool>,
+) -> AppResult<VaultStatus> {
+    let discard = discard.unwrap_or(false);
+    if session::needs_answer(&state) && !discard {
+        return Err(AppError::UnsavedChanges);
+    }
+    session::lock_app_with(&app, "by the user", !discard);
     status_of(&state)
+}
+
+/// Quits from the main window, or after the tray asked the user. Unsaved
+/// edits are saved unless `discard`; `UnsavedChanges` when the setting says
+/// to ask first.
+#[tauri::command]
+pub fn quit_app(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    discard: Option<bool>,
+) -> AppResult<()> {
+    let discard = discard.unwrap_or(false);
+    if session::needs_answer(&state) && !discard {
+        return Err(AppError::UnsavedChanges);
+    }
+    session::leave(&app, discard);
+    app.exit(0);
+    Ok(())
 }
 
 /// Removes a file from the recent list (the file itself is not touched).
@@ -360,6 +417,120 @@ fn totp_error(e: TotpError) -> AppError {
         TotpError::Missing => AppError::NotFound,
         TotpError::Invalid => AppError::TotpInvalid,
     }
+}
+
+// ---------------------------------------------------------------- editing (M7)
+
+/// The entry with every value, for the editor. The second half of the only
+/// exception to "no secrets in the frontend": called when the editor opens,
+/// its result is dropped when the editor closes or the database locks.
+#[tauri::command]
+pub fn get_entry_for_edit(
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> AppResult<EditableEntry> {
+    read(&state, |v| v.editable(&entry_id))
+}
+
+/// Creates an entry in a group and returns its id. Nothing is written to the
+/// file until `save_database`.
+#[tauri::command]
+pub fn create_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    group_id: String,
+    edit: EntryEdit,
+) -> AppResult<String> {
+    edit_vault(&app, &state, |v| v.create_entry(&group_id, &edit))
+}
+
+/// Applies an edit; `false` when it changed nothing. Nothing is written to
+/// the file until `save_database`.
+#[tauri::command]
+pub fn save_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+    edit: EntryEdit,
+) -> AppResult<bool> {
+    edit_vault(&app, &state, |v| v.update_entry(&entry_id, &edit))
+}
+
+/// Older versions of an entry, oldest first.
+#[tauri::command]
+pub fn list_history(state: State<'_, AppState>, entry_id: String) -> AppResult<Vec<HistoryItem>> {
+    read(&state, |v| v.history(&entry_id))
+}
+
+/// One older version, shown like an entry (no secrets).
+#[tauri::command]
+pub fn get_history_entry(
+    state: State<'_, AppState>,
+    entry_id: String,
+    index: usize,
+) -> AppResult<EntryDetail> {
+    read(&state, |v| v.history_entry(&entry_id, index))
+}
+
+/// One field of an older version, on "show password" in the history view.
+#[tauri::command]
+pub fn reveal_history_field(
+    state: State<'_, AppState>,
+    entry_id: String,
+    index: usize,
+    key: String,
+) -> AppResult<String> {
+    read(&state, |v| v.history_field(&entry_id, index, &key)).map(|s| s.expose().to_string())
+}
+
+/// Makes an older version the current one; the current one goes into the
+/// history.
+#[tauri::command]
+pub fn restore_history(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry_id: String,
+    index: usize,
+) -> AppResult<VaultStatus> {
+    edit_vault(&app, &state, |v| v.restore_history(&entry_id, index))?;
+    status_of(&state)
+}
+
+/// Writes the database to its file. `conflict` when another program changed
+/// the file meanwhile; the UI asks, then retries with `force`. `formatUpgrade`
+/// when the file is KDBX 3.1 or 4.0 and the UI has not confirmed the change
+/// to 4.1 yet.
+#[tauri::command]
+pub fn save_database(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    options: Option<SaveOptions>,
+) -> AppResult<VaultStatus> {
+    let mut opts = options.unwrap_or_default();
+    opts.backup = settings(&state)?.current.backup_on_save;
+    {
+        let mut s = session(&state)?;
+        let vault = s.open.as_mut().ok_or(AppError::Locked)?;
+        vault.save(opts).inspect_err(|e| match e {
+            SaveError::Conflict => log::info!("save refused: the file changed elsewhere"),
+            SaveError::Encrypt => log::warn!("save failed: the file does not read back"),
+            SaveError::Write => log::warn!("save failed: cannot write the file"),
+            SaveError::FormatUpgrade => {}
+        })?;
+    }
+    log::info!("database saved");
+    announce(&app, &state)
+}
+
+/// Reads the file again, dropping unsaved edits.
+#[tauri::command]
+pub fn reload_database(app: AppHandle, state: State<'_, AppState>) -> AppResult<VaultStatus> {
+    {
+        let mut s = session(&state)?;
+        let vault = s.open.as_mut().ok_or(AppError::Locked)?;
+        vault.reload()?;
+    }
+    announce(&app, &state)
 }
 
 /// Copies a field (or `@totp`, the current code) without sending it to the

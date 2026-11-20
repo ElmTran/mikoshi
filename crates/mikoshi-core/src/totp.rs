@@ -163,6 +163,66 @@ fn period(text: &str) -> Option<u64> {
 }
 
 impl Totp {
+    pub fn period(&self) -> u64 {
+        self.period
+    }
+
+    pub fn algorithm(&self) -> Algorithm {
+        self.algorithm
+    }
+
+    pub fn encoder(&self) -> Encoder {
+        self.encoder
+    }
+
+    /// The `otp` field value KeePassXC writes for a secret typed in by hand:
+    /// `otpauth://totp/ISSUER:USER?secret=...&period=..&digits=..&issuer=ISSUER`,
+    /// plus `algorithm` when it is not SHA-1. The secret is Base32 in any
+    /// case, spaces, hyphens and padding allowed. Checked by parsing it back.
+    pub fn manual_uri(
+        secret: &str,
+        algorithm: Algorithm,
+        digits: u32,
+        period: u64,
+        issuer: &str,
+        user: &str,
+    ) -> Result<Zeroizing<String>, TotpError> {
+        use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+        let clean: Zeroizing<String> = Zeroizing::new(
+            secret
+                .chars()
+                .filter(|c| !matches!(c, ' ' | '-' | '=') && !c.is_whitespace())
+                .collect::<String>()
+                .to_ascii_uppercase(),
+        );
+        if decode_base32(&clean).is_none_or(|s| s.is_empty())
+            || !(4..=10).contains(&digits)
+            || period == 0
+        {
+            return Err(TotpError::Invalid);
+        }
+        let enc = |s: &str| utf8_percent_encode(s, NON_ALPHANUMERIC).to_string();
+        let issuer = if issuer.trim().is_empty() {
+            "Mikoshi"
+        } else {
+            issuer.trim()
+        };
+        let mut uri = Zeroizing::new(format!(
+            "otpauth://totp/{}:{}?secret={}&period={period}&digits={digits}&issuer={}",
+            enc(issuer),
+            enc(user.trim()),
+            clean.as_str(),
+            enc(issuer),
+        ));
+        match algorithm {
+            Algorithm::Sha1 => {}
+            Algorithm::Sha256 => uri.push_str("&algorithm=SHA256"),
+            Algorithm::Sha512 => uri.push_str("&algorithm=SHA512"),
+        }
+        Totp::parse_uri(&uri)?;
+        Ok(uri)
+    }
+
     fn new(
         secret: Vec<u8>,
         period: u64,

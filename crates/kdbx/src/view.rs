@@ -240,6 +240,28 @@ impl<'a> Meta<'a> {
         uuid_of_text(self.0, "RecycleBinUUID")
     }
 
+    /// `HistoryMaxItems`: `None` means no limit (a negative value). KeePass's
+    /// default, 10, when missing or unreadable.
+    pub fn history_max_items(&self) -> Option<usize> {
+        let n: i64 = self
+            .0
+            .child_text("HistoryMaxItems")
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(10);
+        usize::try_from(n).ok()
+    }
+
+    /// `HistoryMaxSize` in bytes: `None` means no limit (a negative value).
+    /// KeePass's default, 6 MiB, when missing or unreadable.
+    pub fn history_max_size(&self) -> Option<u64> {
+        let n: i64 = self
+            .0
+            .child_text("HistoryMaxSize")
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(6 * 1024 * 1024);
+        u64::try_from(n).ok()
+    }
+
     pub fn custom_icons(&self) -> Vec<CustomIcon<'a>> {
         let Some(icons) = self.0.child("CustomIcons") else {
             return Vec::new();
@@ -497,6 +519,28 @@ impl<'a> Entry<'a> {
         })
     }
 
+    /// Roughly how much memory the entry takes, the way KeePass counts it
+    /// (`PwEntry.GetSize`) to enforce `HistoryMaxSize`. History not included.
+    pub fn approx_size(&self) -> u64 {
+        let len = |c: Option<Cow<'_, str>>| c.map_or(0, |t| t.len() as u64);
+        let mut n = 128;
+        for f in self.fields() {
+            n += f.key().len() as u64 + f.value().len() as u64;
+        }
+        for a in self.attachments() {
+            n += a.name.len() as u64 + a.data.map_or(0, |d| d.len() as u64);
+        }
+        n += len(self.el.child_text("Tags"));
+        n += len(self.el.child_text("OverrideURL"));
+        if let Some(a) = self.autotype() {
+            n += a.default_sequence.map_or(0, |s| s.len() as u64);
+            for x in a.associations {
+                n += (x.window.len() + x.sequence.len()) as u64;
+            }
+        }
+        n
+    }
+
     /// Older versions, oldest first.
     pub fn history(&self) -> impl Iterator<Item = Entry<'a>> + use<'a> {
         let db = self.db;
@@ -524,6 +568,14 @@ fn set_child_text(el: &mut Element, name: &str, text: &str, after: &[&str]) {
 /// Changes to one entry.
 pub struct EntryMut<'a> {
     el: &'a mut Element,
+}
+
+impl<'a> EntryMut<'a> {
+    /// Edits an entry element that is not in a database, such as a copy
+    /// made to see what an edit would change.
+    pub fn new(el: &'a mut Element) -> EntryMut<'a> {
+        EntryMut { el }
+    }
 }
 
 impl EntryMut<'_> {
@@ -572,6 +624,91 @@ impl EntryMut<'_> {
         pos.and_then(|i| self.el.remove_at(i)).is_some()
     }
 
+    /// Renames a field in place. `false` when there is no field `from`, or
+    /// already another one called `to`.
+    pub fn rename_field(&mut self, from: &str, to: &str) -> bool {
+        let has = |el: &Element, k: &str| {
+            el.children_named("String")
+                .any(|e| e.child_text("Key").as_deref() == Some(k))
+        };
+        if from == to {
+            return has(self.el, from);
+        }
+        if has(self.el, to) {
+            return false;
+        }
+        let Some(k) = self
+            .el
+            .elements_mut()
+            .filter(|e| e.name == "String")
+            .find(|e| e.child_text("Key").as_deref() == Some(from))
+            .and_then(|e| e.child_mut("Key"))
+        else {
+            return false;
+        };
+        k.set_text(to);
+        true
+    }
+
+    /// Replaces the tags, separated by `;` as KeePassXC and KeePass 2.47+
+    /// write them.
+    pub fn set_tags(&mut self, tags: &[String]) {
+        let text = tags
+            .iter()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(";");
+        if self.el.child("Tags").is_none() && text.is_empty() {
+            return;
+        }
+        set_child_text(
+            self.el,
+            "Tags",
+            &text,
+            &[
+                "UUID",
+                "IconID",
+                "CustomIconUUID",
+                "ForegroundColor",
+                "BackgroundColor",
+                "OverrideURL",
+                "QualityCheck",
+            ],
+        );
+    }
+
+    /// Sets when the entry expires; `None` means never. Switching expiry off
+    /// keeps the old expiry time, as KeePass does.
+    pub fn set_expiry(&mut self, when: Option<Timestamp>) {
+        self.ensure_times();
+        let t = self.el.child_mut("Times").expect("just ensured");
+        if let Some(when) = when {
+            set_child_text(
+                t,
+                "ExpiryTime",
+                &when.to_base64(),
+                &["LastAccessTime", "CreationTime", "LastModificationTime"],
+            );
+        }
+        set_child_text(
+            t,
+            "Expires",
+            if when.is_some() { "True" } else { "False" },
+            &["ExpiryTime"],
+        );
+    }
+
+    fn ensure_times(&mut self) {
+        if self.el.child("Times").is_none() {
+            self.el.insert_element(
+                Element::new("Times"),
+                &["Tags", "PreviousParentGroup"],
+                &["String"],
+            );
+        }
+    }
+
     /// Copies the entry as it is now into its history.
     pub fn push_history(&mut self) {
         let mut snapshot = self.el.clone();
@@ -586,13 +723,7 @@ impl EntryMut<'_> {
     /// Stamps the modification and access times with now.
     pub fn touch(&mut self) {
         let now = now_text();
-        if self.el.child("Times").is_none() {
-            self.el.insert_element(
-                Element::new("Times"),
-                &["Tags", "PreviousParentGroup"],
-                &["String"],
-            );
-        }
+        self.ensure_times();
         let t = self.el.child_mut("Times").expect("just ensured");
         set_child_text(t, "LastModificationTime", &now, &[]);
         set_child_text(t, "LastAccessTime", &now, &["LastModificationTime"]);
@@ -627,10 +758,95 @@ impl Database {
         })
     }
 
+    /// A raw handle on `Meta`, for settings not covered here.
+    pub fn meta_element_mut(&mut self) -> Option<&mut Element> {
+        self.root.child_mut("Meta")
+    }
+
     /// A raw handle on a group's element, for edits not covered here.
     pub fn group_element_mut(&mut self, id: Uuid) -> Option<&mut Element> {
         let path = self.index.groups.get(&id)?;
         at_mut(&mut self.root, path)
+    }
+
+    /// Drops the oldest history versions of an entry until it is within the
+    /// database's `HistoryMaxItems` and `HistoryMaxSize`, as KeePass does
+    /// after each edit. Returns how many were dropped.
+    pub fn maintain_history(&mut self, id: Uuid) -> usize {
+        let meta = self.meta();
+        let (max_items, max_size) = (meta.history_max_items(), meta.history_max_size());
+        let mut dropped = 0;
+        loop {
+            let Some(e) = self.entry(id) else {
+                return dropped;
+            };
+            let versions: Vec<Entry<'_>> = e.history().collect();
+            let too_many = max_items.is_some_and(|m| versions.len() > m);
+            let too_big = !versions.is_empty()
+                && max_size
+                    .is_some_and(|m| versions.iter().map(Entry::approx_size).sum::<u64>() > m);
+            if !too_many && !too_big {
+                return dropped;
+            }
+            // the oldest by modification time; the first one on a tie
+            let oldest = versions
+                .iter()
+                .enumerate()
+                .min_by_key(|(i, v)| (v.times().last_modification, *i))
+                .map_or(0, |(i, _)| i);
+            let Some(path) = self.index.entries.get(&id).cloned() else {
+                return dropped;
+            };
+            let Some(h) = at_mut(&mut self.root, &path).and_then(|el| el.child_mut("History"))
+            else {
+                return dropped;
+            };
+            let Some(pos) = h
+                .children
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| matches!(c, Node::Element(e) if e.name == "Entry"))
+                .nth(oldest)
+                .map(|(i, _)| i)
+            else {
+                return dropped;
+            };
+            h.remove_at(pos);
+            dropped += 1;
+        }
+    }
+
+    /// Makes history version `index` (oldest first, as [`Entry::history`]
+    /// lists them) the current one. The current version goes into the
+    /// history first, then the history is trimmed to the database's limits.
+    pub fn restore_history(&mut self, id: Uuid, index: usize) -> bool {
+        let Some(old) = self
+            .entry(id)
+            .and_then(|e| e.history().nth(index))
+            .map(|v| v.element().clone())
+        else {
+            return false;
+        };
+        let Some(path) = self.index.entries.get(&id).cloned() else {
+            return false;
+        };
+        let Some(el) = at_mut(&mut self.root, &path) else {
+            return false;
+        };
+        let mut cur = EntryMut { el };
+        cur.push_history();
+        let mut restored = old;
+        restored.remove_child("History");
+        set_child_text(&mut restored, "UUID", &id.to_base64(), &[]);
+        if let Some(h) = cur.el.child("History") {
+            restored.insert_element(h.clone(), &[], &[]);
+        }
+        crate::xml::reindent_like(&mut restored, cur.el);
+        restored.attrs = cur.el.attrs.clone();
+        *cur.el = restored;
+        cur.touch();
+        self.maintain_history(id);
+        true
     }
 
     /// Adds an empty group at the end of `parent`'s subgroups.

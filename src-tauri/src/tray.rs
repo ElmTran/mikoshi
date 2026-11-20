@@ -5,7 +5,7 @@
 use ::windows::Win32::Globalization::GetUserDefaultUILanguage;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Listener, Manager, Wry};
+use tauri::{AppHandle, Emitter, Listener, Manager, Wry};
 
 use crate::AppState;
 use crate::session;
@@ -70,6 +70,20 @@ fn is_locked(app: &AppHandle) -> bool {
         .unwrap_or(true)
 }
 
+/// Unsaved edits are saved on the way out. If the user asked to be prompted
+/// when locking with unsaved edits, the main window gets `quit-requested`
+/// and offers save / discard / cancel instead; it calls `quit_app` itself.
+fn quit(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if crate::session::needs_answer(&state) {
+        windows::focus_main(app);
+        let _ = app.emit("quit-requested", ());
+        return;
+    }
+    crate::session::leave(app, false);
+    app.exit(0);
+}
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let t = texts(app);
     let items = Items {
@@ -107,7 +121,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                     log::error!("cannot show quick search: {e}");
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => quit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

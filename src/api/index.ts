@@ -12,11 +12,15 @@ import {
   type CopyResult,
   type CustomIcon,
   type DialogText,
+  type EditableEntry,
   type EntryDetail,
+  type EntryEdit,
   type EntrySummary,
   type ErrorCode,
   type GroupView,
+  type HistoryItem,
   type HotkeyStatus,
+  type SaveOptions,
   type Settings,
   type TotpView,
   type VaultStatus,
@@ -59,7 +63,8 @@ export const api = {
   getSettings: () => call<Settings>('get_settings'),
   setSettings: (settings: Settings) => call<Settings>('set_settings', { settings }),
   vaultStatus: () => call<VaultStatus>('vault_status'),
-  selectDatabase: (path: string) => call<VaultStatus>('select_database', { path }),
+  /** `discard`: unsaved edits may be dropped */
+  selectDatabase: (path: string, discard = false) => call<VaultStatus>('select_database', { path, discard }),
   /** null when the dialog was cancelled */
   chooseDatabase: (text: DialogText) => call<VaultStatus | null>('choose_database', { text }),
   chooseKeyFile: (text: DialogText) => call<string | null>('choose_key_file', { text }),
@@ -67,13 +72,33 @@ export const api = {
   unlock: (password: string, keyFile: string | null) =>
     call<VaultStatus>('unlock', { password: password || null, keyFile }),
   forgetRecent: (path: string) => call<Settings>('forget_recent', { path }),
-  lock: () => call<VaultStatus>('lock'),
+  /** `discard`: unsaved edits may be dropped; otherwise the setting decides */
+  lock: (discard = false) => call<VaultStatus>('lock', { discard }),
+  /** quits from the tray menu after the user answered; unsaved edits save unless discarded */
+  quitApp: (discard = false) => call<void>('quit_app', { discard }),
   listGroups: () => call<GroupView[]>('list_groups'),
   listEntries: (groupId: string) => call<EntrySummary[]>('list_entries', { groupId }),
   searchEntries: (query: string) => call<EntrySummary[]>('search_entries', { query }),
   getEntry: (id: string) => call<EntryDetail>('get_entry', { id }),
   getCustomIcons: () => call<CustomIcon[]>('get_custom_icons'),
   revealField: (entryId: string, key: string) => call<string>('reveal_field', { entryId, key }),
+  /** the entry with every value, for the editor; drop it when editing ends */
+  getEntryForEdit: (entryId: string) => call<EditableEntry>('get_entry_for_edit', { entryId }),
+  /** creates an entry in a group; returns its id */
+  createEntry: (groupId: string, edit: EntryEdit) => call<string>('create_entry', { groupId, edit }),
+  /** applies an edit; false when it changed nothing */
+  saveEntry: (entryId: string, edit: EntryEdit) => call<boolean>('save_entry', { entryId, edit }),
+  listHistory: (entryId: string) => call<HistoryItem[]>('list_history', { entryId }),
+  getHistoryEntry: (entryId: string, index: number) =>
+    call<EntryDetail>('get_history_entry', { entryId, index }),
+  revealHistoryField: (entryId: string, index: number, key: string) =>
+    call<string>('reveal_history_field', { entryId, index, key }),
+  restoreHistory: (entryId: string, index: number) =>
+    call<VaultStatus>('restore_history', { entryId, index }),
+  /** writes the database to its file; a conflict or upgrade shows up as an error code */
+  saveDatabase: (options?: SaveOptions) => call<VaultStatus>('save_database', { options }),
+  /** reads the file again, dropping unsaved edits */
+  reloadDatabase: () => call<VaultStatus>('reload_database'),
   copyField: (entryId: string, key: string) => call<CopyResult>('copy_field', { entryId, key }),
   getTotp: (entryId: string) => call<TotpView>('get_totp', { entryId }),
   /** opens the entry's URL in the default browser (http and https only) */
@@ -96,7 +121,14 @@ export const api = {
 };
 
 export type AppEvent =
-  'vault-changed' | 'settings-changed' | 'quick-shown' | 'hotkeys-changed' | 'autotype-failed';
+  | 'vault-changed'
+  | 'vault-edited'
+  | 'settings-changed'
+  | 'quick-shown'
+  | 'hotkeys-changed'
+  | 'autotype-failed'
+  | 'save-conflict-copy'
+  | 'quit-requested';
 
 /** Subscribes to an event sent by the Rust side. Returns an unsubscribe function. */
 export async function listen<T>(event: AppEvent, handler: (payload: T) => void): Promise<() => void> {

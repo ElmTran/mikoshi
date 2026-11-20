@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, listen } from '../api';
 import {
   AppError,
   Field,
+  type EditableEntry,
   type EntryDetail as Detail,
+  type EntryEdit,
   type EntrySort,
   type EntrySummary,
   type GroupView,
   type VaultStatus,
 } from '../api/types';
+import { Dialog } from '../components/Dialog';
 import { EntryDetail, type DetailActions } from '../components/EntryDetail';
+import { EntryEditor } from '../components/EntryEditor';
 import { EntryList } from '../components/EntryList';
 import { GroupNav } from '../components/GroupNav';
+import { HistoryDialog } from '../components/HistoryDialog';
 import { Icon } from '../components/Icon';
 import { Keys } from '../components/bits';
 import { TitleBar } from '../components/TitleBar';
@@ -19,6 +24,22 @@ import { usePrefs, useToast } from './contexts';
 import { sortEntries } from './sortEntries';
 
 type Pane = 'groups' | 'list' | 'detail';
+
+/** What the right pane shows instead of the entry detail. */
+type Mode =
+  | { kind: 'view' }
+  /** the entry fetched with all its values; dropped when editing ends */
+  | { kind: 'edit'; entry: EditableEntry }
+  | { kind: 'new' };
+
+/** A question the user has to answer before the action goes ahead. */
+type Ask =
+  | { kind: 'lock' }
+  | { kind: 'quit' }
+  /** the file was changed by another program */
+  | { kind: 'conflict' }
+  /** saving turns a KDBX 3.1 or 4.0 file into 4.1 */
+  | { kind: 'upgrade' };
 const PANES: Pane[] = ['groups', 'list', 'detail'];
 const PAGE = 8;
 
@@ -43,6 +64,14 @@ export function Workspace({ status }: { status: VaultStatus }) {
     values: {},
   });
   const [copied, setCopied] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>({ kind: 'view' });
+  const [ask, setAsk] = useState<Ask | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
+  // bumped after an edit so the list and the detail load again
+  const [version, setVersion] = useState(0);
+  // what to do once a save that needed a dialog went through
+  const afterSave = useRef<'lock' | 'quit' | null>(null);
   const search = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLElement | null>(null);
@@ -105,7 +134,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
     return () => {
       live = false;
     };
-  }, [q, groupId, fail]);
+  }, [q, groupId, fail, version]);
 
   useEffect(() => {
     if (!selected) return;
@@ -114,7 +143,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
     return () => {
       live = false;
     };
-  }, [selected, fail]);
+  }, [selected, fail, version]);
 
   // arrow keys work right away
   useEffect(() => listRef.current?.focus({ preventScroll: true }), []);
@@ -219,15 +248,134 @@ export function Workspace({ status }: { status: VaultStatus }) {
       autotype: () => {
         if (detail) api.autotypeFromMain(detail.id).catch(fail);
       },
-      edit: () => toast({ message: t('toast.edit'), tone: 'info' }),
+      edit: () => startEditRef.current(),
+      history: () => detail && setHistoryFor(detail.id),
       exportAttachment: () => toast({ message: t('toast.export'), tone: 'info' }),
     };
   }, [detail, revealed, t, toast, fail]);
 
+  // ------------------------------------------------------------ editing and saving
+
+  /** The group a new entry goes into: the open one, or the root while searching. */
+  const targetGroup = useMemo(() => {
+    if (!q && groupId) return byId.get(groupId) ?? null;
+    return groups.find((g) => g.kind === 'root') ?? null;
+  }, [q, groupId, byId, groups]);
+
+  const startEdit = useCallback(() => {
+    if (!detail) return;
+    api.getEntryForEdit(detail.id).then((entry) => setMode({ kind: 'edit', entry }), fail);
+  }, [detail, fail]);
+  // the detail actions are created before this; they call through a ref
+  const startEditRef = useRef(startEdit);
+  useEffect(() => {
+    startEditRef.current = startEdit;
+  }, [startEdit]);
+
+  const startNew = useCallback(() => setMode({ kind: 'new' }), []);
+
+  const closeEditor = useCallback(() => {
+    setMode({ kind: 'view' });
+    setBusy(false);
+  }, []);
+
+  const submitEdit = useCallback(
+    (edit: EntryEdit) => {
+      setBusy(true);
+      const done = (id: string) => {
+        closeEditor();
+        setVersion((v) => v + 1);
+        setPicked(id);
+        setQuery('');
+      };
+      const failed = (e: unknown) => {
+        setBusy(false);
+        // a locked vault switches the window to the unlock screen via the event
+        if (!(e instanceof AppError) || e.code !== 'locked') fail(e);
+      };
+      if (mode.kind === 'edit') {
+        api.saveEntry(mode.entry.id, edit).then((changed) => {
+          if (changed) done(mode.entry.id);
+          else closeEditor();
+        }, failed);
+      } else if (targetGroup) {
+        api.createEntry(targetGroup.id, edit).then(done, failed);
+      } else {
+        setBusy(false);
+      }
+    },
+    [closeEditor, fail, mode, targetGroup],
+  );
+
+  /** After a save that needed a dialog: finish the lock or quit that asked for it. */
+  const runAfterSave = useCallback(() => {
+    const pending = afterSave.current;
+    afterSave.current = null;
+    if (pending === 'lock') api.lock(true).catch(fail);
+    else if (pending === 'quit') api.quitApp(true).catch(fail);
+  }, [fail]);
+
+  const runSave = useCallback(
+    (options?: { force?: boolean; upgrade?: boolean }) => {
+      // nothing to write: do not touch the file (and do not ask about 4.1)
+      if (!options?.force && !options?.upgrade && !status.dirty) return;
+      setBusy(true);
+      api.saveDatabase(options).then(
+        () => {
+          setBusy(false);
+          setAsk(null);
+          toast({ message: t('toast.saved') });
+          runAfterSave();
+        },
+        (e) => {
+          setBusy(false);
+          const code = e instanceof AppError ? e.code : 'internal';
+          if (code === 'saveConflict') setAsk({ kind: 'conflict' });
+          else if (code === 'formatUpgrade') setAsk({ kind: 'upgrade' });
+          else {
+            setAsk(null);
+            afterSave.current = null;
+            fail(e);
+          }
+        },
+      );
+    },
+    [fail, runAfterSave, status.dirty, t, toast],
+  );
+
   const lock = useCallback(() => {
     setShown({ id: null, values: {} });
-    api.lock().catch(fail);
+    api.lock().then(
+      () => setMode({ kind: 'view' }),
+      (e) => {
+        if (e instanceof AppError && e.code === 'unsavedChanges') setAsk({ kind: 'lock' });
+        else fail(e);
+      },
+    );
   }, [fail]);
+
+  const quit = useCallback(
+    (discard: boolean) =>
+      api.quitApp(discard).catch((e: unknown) => {
+        if (e instanceof AppError && e.code === 'unsavedChanges') setAsk({ kind: 'quit' });
+        else fail(e);
+      }),
+    [fail],
+  );
+
+  // the tray asked to quit while edits are unsaved
+  useEffect(() => {
+    const off = listen('quit-requested', () => setAsk({ kind: 'quit' }));
+    return () => void off.then((f) => f());
+  }, []);
+
+  // edits that could not be saved over the file went to a separate one
+  useEffect(() => {
+    const off = listen<string>('save-conflict-copy', (path) =>
+      toast({ message: t('toast.savedCopy', { path }), tone: 'error', seconds: 12 }),
+    );
+    return () => void off.then((f) => f());
+  }, [t, toast]);
 
   const sortBy = useCallback((entrySort: EntrySort) => void update({ entrySort }), [update]);
 
@@ -271,6 +419,17 @@ export function Workspace({ status }: { status: VaultStatus }) {
         fn();
       };
 
+      // a dialog answers its own keys
+      if (ask || historyFor) return;
+
+      // editing takes the keyboard: Escape cancels, Ctrl+S saves, the rest
+      // (Tab between fields included) belongs to the form
+      if (mode.kind !== 'view') {
+        if (k === 'Escape') return run(closeEditor);
+        if (ctrl && !e.shiftKey && k === 's') return run(() => runSave());
+        return;
+      }
+
       // Tab moves between the three panes (and from the search box into the list)
       if (k === 'Tab' && !ctrl && !e.altKey && at !== 'other') {
         const target: Pane =
@@ -292,7 +451,8 @@ export function Workspace({ status }: { status: VaultStatus }) {
         if (k === 't') return run(() => detail?.hasTotp && actions.copy(Field.Totp));
         if (k === 'h') return run(() => detail?.hasPassword && actions.toggleReveal(Field.Password));
         if (k === 'e') return run(actions.edit);
-        if (k === 'n') return run(() => toast({ message: t('toast.newEntry'), tone: 'info' }));
+        if (k === 'n') return run(startNew);
+        if (k === 's') return run(() => runSave());
         if (k === ',')
           return run(() => document.querySelector<HTMLButtonElement>('[data-settings-toggle]')?.click());
         if (k === 'c') {
@@ -343,18 +503,24 @@ export function Workspace({ status }: { status: VaultStatus }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [
     actions,
+    ask,
     byId,
+    closeEditor,
     collapsed,
     detail,
     fail,
     groupId,
+    historyFor,
     list.length,
     lock,
+    mode.kind,
     moveEntry,
     moveGroup,
     query,
+    runSave,
     selectGroup,
     setOpen,
+    startNew,
     t,
     toast,
     visible.length,
@@ -383,8 +549,10 @@ export function Workspace({ status }: { status: VaultStatus }) {
     <div className="shell workspace">
       <TitleBar
         fileName={status.file ?? status.name}
+        dirty={status.dirty}
         center={searchBox}
         onQuickSearch={() => void api.showQuickSearch().catch(fail)}
+        onSave={status.dirty ? () => runSave() : undefined}
         onLock={lock}
       />
       <div className="body">
@@ -405,11 +573,29 @@ export function Workspace({ status }: { status: VaultStatus }) {
             sort={settings.entrySort}
             onSort={sortBy}
             onSelect={setPicked}
-            onNew={() => toast({ message: t('toast.newEntry'), tone: 'info' })}
+            onNew={startNew}
             listRef={listRef}
           />
           <section className="detail pane" aria-live="polite" tabIndex={0} ref={detailRef}>
-            {detail ? (
+            {mode.kind === 'edit' ? (
+              <EntryEditor
+                key={mode.entry.id}
+                entry={mode.entry}
+                groupName={detail?.groupPath.join(' / ') ?? ''}
+                busy={busy}
+                onSave={submitEdit}
+                onCancel={closeEditor}
+              />
+            ) : mode.kind === 'new' ? (
+              <EntryEditor
+                key="new"
+                entry={null}
+                groupName={targetGroup?.name ?? ''}
+                busy={busy}
+                onSave={submitEdit}
+                onCancel={closeEditor}
+              />
+            ) : detail ? (
               <EntryDetail entry={detail} revealed={revealed} copied={copied} actions={actions} />
             ) : (
               <div className="empty">{t('detail.empty')}</div>
@@ -417,6 +603,121 @@ export function Workspace({ status }: { status: VaultStatus }) {
           </section>
         </div>
       </div>
+
+      {historyFor && (
+        <HistoryDialog
+          entryId={historyFor}
+          onClose={() => setHistoryFor(null)}
+          onRestored={() => {
+            setHistoryFor(null);
+            setVersion((v) => v + 1);
+            toast({ message: t('toast.restored') });
+          }}
+          onError={fail}
+        />
+      )}
+
+      {ask?.kind === 'lock' && (
+        <Dialog
+          title={t('dialog.unsaved.title')}
+          onClose={() => setAsk(null)}
+          actions={[
+            { label: t('dialog.unsaved.cancel'), onClick: () => setAsk(null) },
+            {
+              label: t('dialog.unsaved.discard'),
+              danger: true,
+              onClick: () => {
+                setAsk(null);
+                api.lock(true).catch(fail);
+              },
+            },
+            {
+              label: t('dialog.unsaved.save'),
+              primary: true,
+              onClick: () => {
+                afterSave.current = 'lock';
+                runSave();
+              },
+            },
+          ]}
+        >
+          <p>{t('dialog.unsaved.message')}</p>
+        </Dialog>
+      )}
+
+      {ask?.kind === 'quit' && (
+        <Dialog
+          title={t('dialog.unsaved.title')}
+          onClose={() => setAsk(null)}
+          actions={[
+            { label: t('dialog.unsaved.cancel'), onClick: () => setAsk(null) },
+            {
+              label: t('dialog.unsaved.discard'),
+              danger: true,
+              onClick: () => {
+                setAsk(null);
+                quit(true);
+              },
+            },
+            {
+              label: t('dialog.unsaved.save'),
+              primary: true,
+              onClick: () => {
+                afterSave.current = 'quit';
+                runSave();
+              },
+            },
+          ]}
+        >
+          <p>{t('dialog.unsaved.message')}</p>
+        </Dialog>
+      )}
+
+      {ask?.kind === 'conflict' && (
+        <Dialog
+          title={t('dialog.conflict.title')}
+          onClose={() => setAsk(null)}
+          actions={[
+            { label: t('dialog.conflict.cancel'), onClick: () => setAsk(null) },
+            {
+              label: t('dialog.conflict.reload'),
+              danger: true,
+              onClick: () => {
+                setAsk(null);
+                afterSave.current = null;
+                api.reloadDatabase().then(() => {
+                  setVersion((v) => v + 1);
+                  toast({ message: t('toast.reloaded') });
+                }, fail);
+              },
+            },
+            {
+              label: t('dialog.conflict.overwrite'),
+              primary: true,
+              onClick: () => runSave({ force: true }),
+            },
+          ]}
+        >
+          <p>{t('dialog.conflict.message')}</p>
+        </Dialog>
+      )}
+
+      {ask?.kind === 'upgrade' && (
+        <Dialog
+          title={t('dialog.upgrade.title')}
+          onClose={() => setAsk(null)}
+          actions={[
+            { label: t('dialog.unsaved.cancel'), onClick: () => setAsk(null) },
+            {
+              label: t('dialog.upgrade.save'),
+              primary: true,
+              onClick: () => runSave({ upgrade: true }),
+            },
+          ]}
+        >
+          <p>{t('dialog.upgrade.message')}</p>
+        </Dialog>
+      )}
     </div>
   );
 }

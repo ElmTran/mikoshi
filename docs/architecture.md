@@ -21,7 +21,7 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 
 1. **前端拿到的数据类型里没有秘密。** `EntrySummary`、`EntryDetail` 等类型定义在 `mikoshi-core/src/model.rs`，里面没有密码、受保护字段的值和 TOTP 密钥。受保护的自定义字段，`value` 是 `null`。存 TOTP 密钥的字段（`otp`、`TOTP Seed`、`TOTP Settings`、`TimeOtp-*`、`HmacOtp-*`）根本不出现在字段列表里，`reveal_field` 也拒绝它们。`mikoshi-core/src/vault.rs` 里有一条测试，用测试库把所有视图序列化成 JSON，检查里面不含任何受保护的值和 TOTP 密钥。
 2. **复制、TOTP、自动输入都传条目 ID，由 Rust 端完成。** 前端调 `copy_field(entryId, key)`，值不经过前端。
-3. **只有 `reveal_field` 会把一个秘密发给前端**，而且只在用户主动点"显示"（以及 M7 的"编辑"）时调用。前端把它存在组件状态里，切换条目、隐藏、锁定时立即丢弃。快速搜索窗口没有调用它的权限。
+3. **只有 `reveal_field` 和 `get_entry_for_edit` 会把秘密发给前端**，前者只在用户主动点"显示"时调用，后者只在打开编辑表单时调用。前端把它们存在组件状态里，切换条目、隐藏、关闭编辑、锁定时立即丢弃。快速搜索窗口没有调用它们的权限。
 4. **秘密在 Rust 里用 `Secret` 类型。** 它的 `Debug` 和 `Display` 只输出 `[redacted]`，释放时擦除内存，并且故意没有实现 `Serialize`：想把它发给前端，只能显式调用 `.expose()`，这样所有出口都能搜到。
 
 标题、用户名、网址、备注、标签、自定义图标属于元数据，照常发给前端，即使库的"内存保护"设置把它们标成受保护（规格 §6 的划分）。
@@ -58,6 +58,16 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 | `get_entry` | 条目详情（不含秘密） | ✓ | |
 | `get_custom_icons` | 库里的自定义图标（图片数据） | ✓ | ✓ |
 | `reveal_field` | 取一个字段的明文 | ✓ | |
+| `get_entry_for_edit` | 带全部值（含秘密）的条目，给编辑表单用；编辑结束就丢掉 | ✓ | |
+| `create_entry` | 在分组里新建条目，返回 id（只在内存里） | ✓ | |
+| `save_entry` | 应用一次编辑；没改动时返回 `false` | ✓ | |
+| `list_history` | 条目的历史版本（旧到新） | ✓ | |
+| `get_history_entry` | 一个历史版本，按条目详情的形式（不含秘密） | ✓ | |
+| `reveal_history_field` | 历史版本里的一个字段明文 | ✓ | |
+| `restore_history` | 把一个历史版本变成当前版本，现在的版本存进历史 | ✓ | |
+| `save_database` | 写回文件；`options.force` 覆盖外部修改，`options.upgrade` 同意变成 4.1 | ✓ | |
+| `reload_database` | 重新读文件，丢掉未保存的修改 | ✓ | |
+| `quit_app` | 从主窗口退出（托盘退出走的也是这个）；`discard` 表示不要未保存的修改 | ✓ | |
 | `copy_field` | 复制一个字段或当前验证码（`@totp`），见"剪贴板" | ✓ | ✓ |
 | `get_totp` | 当前验证码和剩余秒数 | ✓ | |
 | `open_url` | 用默认浏览器打开条目的网址（只限 http 和 https） | ✓ | |
@@ -80,6 +90,9 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 | `settings-changed` | 设置保存之后（包括解锁后更新最近文件列表） | 新的设置 |
 | `quick-shown` | 快速搜索框显示时 | 无；窗口收到后清空上次的输入 |
 | `hotkeys-changed` | 热键重新注册之后 | 新的热键状态 |
+| `vault-edited` | 编辑、新建、恢复历史之后 | 新的库状态（含 `dirty`）；快速搜索框据此重新搜索 |
+| `save-conflict-copy` | 锁定或退出时文件被别处改过，修改另存了一份 | 另存的文件路径 |
+| `quit-requested` | 托盘点了退出，但设置是"有未保存的修改时问我" | 无；主窗口弹出对话框 |
 
 托盘菜单在 Rust 端监听 `vault-changed` 和 `settings-changed`，跟着更新"锁定/解锁…"和语言。
 
@@ -87,7 +100,22 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 命令失败时只返回一个错误码，例如 `{"code": "locked"}`，前端按当前语言显示对应的文案（`error.locked` 等）。错误里**不带任何用户数据**，所以可以放心写进日志或显示出来。错误码定义在 `src-tauri/src/error.rs`，前端的对应类型在 `src/api/types.ts`。
 
-解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
+解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`fieldName`（自定义字段名不能为空、重复或占用标准/验证码字段名）、`expiry`（过期时间无法识别）、`unsavedChanges`（有未保存的修改，等用户决定）、`saveConflict`（文件被别处改过）、`saveFailed`（写不了文件或加密后读不回来）、`formatUpgrade`（保存会变成 KDBX 4.1，等用户同意）、`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
+
+### 编辑与保存（M7）
+
+- 编辑在右侧详情栏进行：详情栏换成表单，条目列表照常。表单打开时一次性取走条目的全部值（`get_entry_for_edit`），关闭或锁定时整个组件卸载
+- 核心库（`crates/mikoshi-core/src/vault/edit.rs`）里，编辑只改对应的节点：标准字段按 `MemoryProtection` 决定新字段是否受保护（密码总是），自定义字段可以改名、增删、单独改保护，标签用 `;` 分隔，过期时间写进 `Times`。TOTP 写成 `otp` 字段并删掉这个条目里其他验证码写法，避免两套设置算出不同的码
+- 每次应用编辑前先把原版本存进历史（`push_history`），完成后按库里的 `HistoryMaxItems`、`HistoryMaxSize` 裁剪。没改动的编辑不产生历史，也不标未保存
+- 未保存的修改只用 `Vault.dirty` 记着，标题栏显示小圆点和"保存"按钮，`Ctrl+S` 保存
+- 保存（`crates/mikoshi-core/src/vault/save.rs`）：
+  1. 先比文件内容的 SHA-256 和打开时（或上次保存时）记下的是否相同；不同就报 `saveConflict`，除非 `force`
+  2. `kdbx` 加密后自己读回来核对，树和附件必须一致（用已经算出的 KDF 结果，不重跑 KDF）
+  3. 写到旁边的 `名字.mikoshi-tmp`，落盘
+  4. `ReplaceFileW` 换上去，旧文件变成 `名字.bak`（关闭备份时改成临时名字再删掉）。失败时旧文件不动，临时文件删掉
+- 文件是 3.1 或 4.0 时，第一次保存前要 `upgrade: true`，前端弹框说明会变成 4.1
+- 锁定、退出、切换库时有未保存的修改：设置是 `save` 就直接保存；是 `ask` 时手动锁定/退出先弹框（保存 / 不保存 / 取消），自动锁定没人回答，照样保存。任何一条自动保存路径碰到 `saveConflict` 都不覆盖原文件，而是把这一版写成 `名字.mikoshi-conflict-<时间>.kdbx`（同一个密钥），并发 `save-conflict-copy` 让主窗口提示
+- 重新加载（`reload_database`）丢掉内存里的修改，用同一个密钥重读文件
 
 ### 剪贴板
 
@@ -199,6 +227,8 @@ M6 起替代 keepass-rs。原则是**读进来什么就写回什么，只改动�
   - `clipboardClearSeconds`：复制的秘密多少秒后清除，默认 10，0 表示不清除
   - `idleLockMinutes`：全局无操作多少分钟后锁定，默认 5，0 表示不锁定
   - `lockOnMinimize`：主窗口最小化时锁定，默认关
+  - `backupOnSave`：保存前把上一版留成 `名字.bak`，默认开
+  - `lockUnsaved`：有未保存的修改时锁定怎么办，`save`（默认，直接保存）或 `ask`（手动锁定先问；空闲、锁屏、睡眠这类自动锁定照样保存）
   - `quickSearchHotkey`、`lockHotkey`：全局热键，默认 `Ctrl+Alt+K`、`Ctrl+Alt+L`，空字符串表示关闭
 - `recent` 由 Rust 端维护：解锁成功时更新，`forget_recent` 删除。`set_settings` 收到的 `recent` 会被忽略，免得某个窗口拿着旧列表把新列表覆盖掉
 - **只放非敏感信息。**

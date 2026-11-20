@@ -6,10 +6,13 @@ import demo from './mock-vault.json';
 import {
   AppError,
   DEFAULT_SETTINGS,
+  type EditableEntry,
   type EntryDetail,
+  type EntryEdit,
   type EntrySummary,
   type GroupKind,
   type GroupView,
+  type HistoryItem,
   type Settings,
   type TotpView,
   type VaultStatus,
@@ -74,6 +77,10 @@ const ICONS: Record<string, number> = {
 
 let locked = true;
 let current: string | null = data.path;
+// unsaved edits, as in the real app
+let dirty = false;
+// older versions by entry id, oldest first
+const past = new Map<string, DemoEntry[]>();
 const bus = new EventTarget();
 
 function emit(event: string, payload: unknown) {
@@ -110,7 +117,72 @@ const status = (): VaultStatus => ({
   file: current ? baseName(current) : null,
   name: locked ? (current ? baseName(current).replace(/\.kdbx$/i, '') : '') : data.name,
   keyFile: loadSettings().recent.find((r) => r.path === current)?.keyFile ?? null,
+  dirty: !locked && dirty,
 });
+
+/** Entries get a new "modified" time on every edit; keep one clock for all. */
+const now = () => new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+
+function remember(e: DemoEntry) {
+  const list = past.get(e.id) ?? [];
+  list.push({ ...e });
+  past.set(e.id, list);
+}
+
+function applyEdit(e: DemoEntry, edit: EntryEdit) {
+  remember(e);
+  e.title = edit.title;
+  e.username = edit.username;
+  e.password = edit.password;
+  e.url = edit.url;
+  e.notes = edit.notes;
+  e.tags = edit.tags;
+  e.expires = edit.expires;
+  e.fields = edit.fields.map((f) => ({ key: f.key, value: f.value, protected: f.protected }));
+  if (edit.totp.kind === 'remove') e.otp = false;
+  else if (edit.totp.kind !== 'unchanged') e.otp = true;
+  e.modified = now();
+}
+
+function editable(e: DemoEntry): EditableEntry {
+  return {
+    id: e.id,
+    groupId: e.group,
+    title: e.title,
+    username: e.username,
+    password: e.password,
+    url: e.url,
+    notes: e.notes ?? '',
+    tags: e.tags ?? [],
+    expires: e.expires ?? null,
+    fields: (e.fields ?? []).map((f) => ({ ...f })),
+    totp: e.otp ? { valid: true, algorithm: 'SHA1', digits: 6, period: 30, steam: false } : null,
+  };
+}
+
+function detailOf(e: DemoEntry): EntryDetail {
+  const path: string[] = [];
+  let g = data.groups.find((x) => x.id === e.group);
+  while (g) {
+    path.unshift(g.name);
+    const parent = g.parent;
+    g = parent ? data.groups.find((x) => x.id === parent) : undefined;
+  }
+  return {
+    ...summary(e),
+    groupPath: path,
+    notes: e.notes ?? '',
+    created: e.created,
+    expires: e.expires ?? null,
+    hasPassword: Boolean(e.password),
+    fields: (e.fields ?? []).map((f) => ({
+      key: f.key,
+      protected: f.protected,
+      value: f.protected ? null : f.value,
+    })),
+    attachments: e.attachments ?? [],
+  };
+}
 
 function announce() {
   const s = status();
@@ -227,6 +299,7 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
         return status();
       case 'select_database':
         locked = true;
+        dirty = false;
         current = a.path ?? null;
         return announce();
       case 'choose_database':
@@ -252,7 +325,10 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
         return announce();
       }
       case 'lock':
+        if (dirty && args.discard !== true && loadSettings().lockUnsaved === 'ask')
+          throw new AppError('unsavedChanges');
         locked = true;
+        dirty = false;
         return announce();
       case 'forget_recent': {
         const s = loadSettings();
@@ -290,31 +366,85 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
           .sort((x, y) => x[0] - y[0] || y[1].modified.localeCompare(x[1].modified))
           .map(([, e]) => summary(e));
       }
-      case 'get_entry': {
-        const e = find(a.id ?? '');
-        const path: string[] = [];
-        let g = data.groups.find((x) => x.id === e.group);
-        while (g) {
-          path.unshift(g.name);
-          const parent = g.parent;
-          g = parent ? data.groups.find((x) => x.id === parent) : undefined;
-        }
-        const detail: EntryDetail = {
-          ...summary(e),
-          groupPath: path,
-          notes: e.notes ?? '',
-          created: e.created,
-          expires: e.expires ?? null,
-          hasPassword: Boolean(e.password),
-          fields: (e.fields ?? []).map((f) => ({
-            key: f.key,
-            protected: f.protected,
-            value: f.protected ? null : f.value,
-          })),
-          attachments: e.attachments ?? [],
+      case 'get_entry':
+        return detailOf(find(a.id ?? ''));
+      case 'get_entry_for_edit':
+        return editable(find(a.entryId ?? ''));
+      case 'create_entry': {
+        open();
+        const edit = args.edit as EntryEdit;
+        const entry: DemoEntry = {
+          id: `new-${Date.now()}`,
+          group: a.groupId ?? '',
+          title: '',
+          username: '',
+          password: '',
+          url: '',
+          created: now(),
+          modified: now(),
         };
-        return detail;
+        applyEdit(entry, edit);
+        past.delete(entry.id);
+        data.entries.push(entry);
+        dirty = true;
+        emit('vault-edited', status());
+        return entry.id;
       }
+      case 'save_entry': {
+        const e = find(a.entryId ?? '');
+        const before = JSON.stringify(e);
+        const edit = args.edit as EntryEdit;
+        remember(e);
+        applyEdit(e, edit);
+        if (JSON.stringify(e) === before) {
+          past.get(e.id)?.pop();
+          return false;
+        }
+        dirty = true;
+        emit('vault-edited', status());
+        return true;
+      }
+      case 'list_history': {
+        const e = find(a.entryId ?? '');
+        return (past.get(e.id) ?? []).map((h, index): HistoryItem => ({
+          index,
+          modified: h.modified,
+          title: h.title,
+          username: h.username,
+        }));
+      }
+      case 'get_history_entry': {
+        const e = find(a.entryId ?? '');
+        const h = past.get(e.id)?.[Number(a.index ?? -1)];
+        if (!h) throw new AppError('notFound');
+        return detailOf(h);
+      }
+      case 'reveal_history_field': {
+        const e = find(a.entryId ?? '');
+        const h = past.get(e.id)?.[Number(a.index ?? -1)];
+        if (!h) throw new AppError('notFound');
+        return field(h, a.key ?? '');
+      }
+      case 'restore_history': {
+        const e = find(a.entryId ?? '');
+        const h = past.get(e.id)?.[Number(a.index ?? -1)];
+        if (!h) throw new AppError('notFound');
+        remember(e);
+        Object.assign(e, { ...h, id: e.id, group: e.group, modified: now() });
+        dirty = true;
+        emit('vault-edited', announce());
+        return status();
+      }
+      case 'save_database':
+        open();
+        dirty = false;
+        return announce();
+      case 'reload_database':
+        open();
+        dirty = false;
+        return announce();
+      case 'quit_app':
+        return null;
       case 'get_custom_icons':
         open();
         return [];

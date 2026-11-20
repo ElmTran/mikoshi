@@ -143,7 +143,9 @@ impl Database {
     }
 
     /// Encrypts the database as KDBX 4.1 with fresh seeds, keeping the cipher,
-    /// KDF parameters and compression. Runs the KDF once.
+    /// KDF parameters and compression. Runs the KDF once, then decrypts the
+    /// result again with the same derived key and checks it holds the same
+    /// tree and attachments.
     pub fn save(&self, key: &Key) -> Result<Vec<u8>> {
         let composite = key.composite()?;
         let mut header = self.header.clone();
@@ -198,6 +200,18 @@ impl Database {
             out.extend_from_slice(&len);
             out.extend_from_slice(block);
         }
+
+        // Read back what was just written before anyone replaces a file with
+        // it: it must decrypt with this key and hold the same tree.
+        let check = OuterHeader::parse(&out)
+            .and_then(|h| {
+                let payload = decrypt4_with(&out, &h, &composite, Some(&transformed))?;
+                finish4(h, &payload)
+            })
+            .map_err(|_| Error::Corrupt("the saved file does not read back"))?;
+        if check.root != self.root || check.binaries != self.binaries {
+            return Err(Error::Corrupt("the saved file does not read back"));
+        }
         Ok(out)
     }
 
@@ -237,6 +251,17 @@ pub(crate) fn gunzip(data: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
 /// Verifies the header and the HMAC blocks and decrypts. Returns the plaintext
 /// payload (inner header + XML), decompressed.
 fn decrypt4(data: &[u8], header: &OuterHeader, composite: &[u8; 32]) -> Result<Zeroizing<Vec<u8>>> {
+    decrypt4_with(data, header, composite, None)
+}
+
+/// [`decrypt4`] with the KDF result already known (checking a file just
+/// written), so the KDF does not run again.
+fn decrypt4_with(
+    data: &[u8],
+    header: &OuterHeader,
+    composite: &[u8; 32],
+    known: Option<&[u8; 32]>,
+) -> Result<Zeroizing<Vec<u8>>> {
     let header_bytes = &data[..header.len];
     let mut r = Reader::new(data);
     r.take(header.len, "truncated header")?;
@@ -245,7 +270,10 @@ fn decrypt4(data: &[u8], header: &OuterHeader, composite: &[u8; 32]) -> Result<Z
         return Err(Error::Corrupt("header checksum mismatch"));
     }
     let tag = r.take(32, "truncated header")?;
-    let transformed = transform_key(composite, &header.kdf)?;
+    let transformed = match known {
+        Some(t) => Zeroizing::new(*t),
+        None => transform_key(composite, &header.kdf)?,
+    };
     let hmac_base = sha512(&[&header.master_seed, &transformed[..], &[1]]);
     let header_key = sha512(&[&u64::MAX.to_le_bytes(), &hmac_base[..]]);
     if !crypto::hmac_verify(&header_key[..], &[header_bytes], tag) {

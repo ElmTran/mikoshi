@@ -90,6 +90,8 @@ export interface VaultStatus {
   name: string;
   /** key file remembered for this database (a path, never contents) */
   keyFile: string | null;
+  /** edits not saved yet */
+  dirty: boolean;
 }
 
 export interface AppInfo {
@@ -143,7 +145,13 @@ export interface Settings {
   autotypeHotkey: string;
   /** milliseconds between auto-typed keys */
   autotypeKeyDelayMs: number;
+  /** keep the previous file as NAME.bak before each save */
+  backupOnSave: boolean;
+  /** unsaved edits when the database locks: save, or ask on a manual lock */
+  lockUnsaved: LockUnsaved;
 }
+
+export type LockUnsaved = 'save' | 'ask';
 
 /** What became of a hotkey from the settings. */
 export type HotkeyState = 'off' | 'active' | 'taken' | 'invalid';
@@ -173,7 +181,84 @@ export const DEFAULT_SETTINGS: Settings = {
   lockHotkey: 'Ctrl+Alt+L',
   autotypeHotkey: 'Ctrl+Alt+V',
   autotypeKeyDelayMs: 20,
+  backupOnSave: true,
+  lockUnsaved: 'save',
 };
+
+// ---------------------------------------------------------------- editing
+
+/** An entry with every value (secrets included), for the editor. */
+export interface EditableEntry {
+  id: string;
+  groupId: string;
+  title: string;
+  username: string;
+  password: string;
+  url: string;
+  notes: string;
+  tags: string[];
+  /** ISO 8601, UTC; null when it never expires */
+  expires: string | null;
+  fields: EditableField[];
+  /** TOTP settings without the secret; null when there is none */
+  totp: TotpSummary | null;
+}
+
+export interface EditableField {
+  key: string;
+  value: string;
+  protected: boolean;
+}
+
+export interface TotpSummary {
+  /** false when the settings cannot be used */
+  valid: boolean;
+  algorithm: string | null;
+  digits: number | null;
+  period: number | null;
+  steam: boolean;
+}
+
+export interface HistoryItem {
+  /** position in the file's history, oldest first */
+  index: number;
+  modified: string | null;
+  title: string;
+  username: string;
+}
+
+export interface FieldEdit {
+  /** the name before the edit; null for a new field */
+  original: string | null;
+  key: string;
+  value: string;
+  protected: boolean;
+}
+
+export type TotpEdit =
+  | { kind: 'unchanged' }
+  | { kind: 'remove' }
+  | { kind: 'uri'; uri: string }
+  | { kind: 'manual'; secret: string; algorithm: string; digits: number; period: number };
+
+export interface EntryEdit {
+  title: string;
+  username: string;
+  password: string;
+  url: string;
+  notes: string;
+  tags: string[];
+  expires: string | null;
+  fields: FieldEdit[];
+  totp: TotpEdit;
+}
+
+export interface SaveOptions {
+  /** overwrite although another program changed the file */
+  force?: boolean;
+  /** the user agreed to the file becoming KDBX 4.1 */
+  upgrade?: boolean;
+}
 
 /** KeePass field keys, plus the pseudo-field for the current TOTP code. */
 export const Field = {
@@ -214,6 +299,12 @@ export const ERROR_CODES = [
   'autotypeFailed',
   'window',
   'internal',
+  'fieldName',
+  'expiry',
+  'unsavedChanges',
+  'saveConflict',
+  'saveFailed',
+  'formatUpgrade',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

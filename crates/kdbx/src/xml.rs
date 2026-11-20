@@ -247,6 +247,20 @@ impl Element {
     }
 }
 
+/// Re-indents the inside of `el` for an element whose closing tag sits after
+/// the whitespace `template`'s last child holds (a newline and tabs, say).
+/// Does nothing when `template` is written without indentation. Leaf values
+/// are not touched, whitespace-only ones included.
+pub(crate) fn reindent_like(el: &mut Element, template: &Element) {
+    if let Some(Node::Text(outer)) = template.children.last()
+        && outer.trim().is_empty()
+        && outer.contains('\n')
+    {
+        let outer = outer.clone();
+        indent_children(el, &outer, indent_unit(&outer));
+    }
+}
+
 fn indent_unit(indent: &str) -> &'static str {
     if indent.ends_with(' ') { "  " } else { "\t" }
 }

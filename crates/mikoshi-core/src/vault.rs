@@ -1,7 +1,8 @@
 //! An unlocked KDBX database and the views of it the frontend may see.
 //!
-//! Opening never writes anything. The decrypted database lives in [`Vault`];
-//! dropping it (on lock) releases it all. The `kdbx` crate keeps protected
+//! Opening never writes anything; edits change the tree in memory and only
+//! [`Vault::save`] writes the file. The decrypted database lives in
+//! [`Vault`]; dropping it (on lock) releases it all. The `kdbx` crate keeps protected
 //! values and attachments in memory that is wiped on drop; unprotected fields
 //! (user names, URLs, notes) are ordinary strings.
 
@@ -24,6 +25,17 @@ use crate::model::{
 };
 use crate::search::{Haystack, Query};
 use crate::totp::{self, Totp, TotpError};
+
+mod edit;
+#[cfg(test)]
+mod edit_tests;
+mod save;
+
+pub use edit::{
+    EditError, EditableEntry, EditableField, EntryEdit, FieldEdit, HistoryItem, TotpEdit,
+    TotpSummary,
+};
+pub use save::{SaveError, SaveOptions, backup_path};
 
 /// Why a database could not be opened. Carries no user data, so it can be
 /// logged and shown as is.
@@ -160,10 +172,20 @@ pub enum AutotypeOff {
     InRecycleBin,
 }
 
-/// An unlocked database. Never written back to disk (that starts in M7).
+/// An unlocked database.
 pub struct Vault {
     db: Database,
     path: PathBuf,
+    /// hashes of the password and key file, wiped on drop. Saving runs the
+    /// KDF again, so it needs them.
+    key: Key,
+    /// the file as it was when opened or last saved, to notice changes made
+    /// by someone else before overwriting them
+    disk: save::DiskState,
+    /// edits not saved yet
+    dirty: bool,
+    /// saved at least once since it was opened (the format is 4.1 from then on)
+    saved: bool,
     /// tree order: depth first, the recycle bin last among its siblings
     groups: Vec<GroupNode>,
     group_index: HashMap<String, usize>,
@@ -205,14 +227,42 @@ impl Vault {
         // The kdbx crate returns errors for malformed input (fuzzed in M6);
         // this is a last line of defence so a damaged file can never take
         // the whole program down.
-        let db = match catch_unwind(AssertUnwindSafe(|| Database::open(&data, &key))) {
+        Vault::open_with(path, key, &data)
+    }
+
+    /// Opens `data`, just read from `path`, with a key already made.
+    fn open_with(path: &Path, key: Key, data: &[u8]) -> Result<Vault, OpenError> {
+        let db = match catch_unwind(AssertUnwindSafe(|| Database::open(data, &key))) {
             Ok(r) => r?,
             Err(_) => return Err(OpenError::Corrupt),
         };
-        Ok(Vault::index(db, path.to_path_buf()))
+        let (groups, group_index, entries) = Vault::layout(&db);
+        Ok(Vault {
+            db,
+            path: path.to_path_buf(),
+            key,
+            disk: save::DiskState::of(data),
+            dirty: false,
+            saved: false,
+            groups,
+            group_index,
+            entries,
+        })
     }
 
-    fn index(db: Database, path: PathBuf) -> Vault {
+    /// Rebuilds the group and entry lookup after the tree changed shape.
+    fn relayout(&mut self) {
+        (self.groups, self.group_index, self.entries) = Vault::layout(&self.db);
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn layout(
+        db: &Database,
+    ) -> (
+        Vec<GroupNode>,
+        HashMap<String, usize>,
+        HashMap<String, (Uuid, usize)>,
+    ) {
         struct Walk {
             bin: Option<Uuid>,
             groups: Vec<GroupNode>,
@@ -295,13 +345,7 @@ impl Vault {
             .enumerate()
             .map(|(i, g)| (g.key.clone(), i))
             .collect();
-        Vault {
-            db,
-            path,
-            groups: w.groups,
-            group_index,
-            entries: w.entries,
-        }
+        (w.groups, group_index, w.entries)
     }
 
     pub fn path(&self) -> &Path {
@@ -437,7 +481,12 @@ impl Vault {
 
     pub fn entry(&self, id: &str) -> Option<EntryDetail> {
         let (e, group) = self.entry_ref(id)?;
-        let f = Fields::of(&e);
+        Some(self.detail(&e, id, group))
+    }
+
+    /// The detail view of an entry or of one of its history versions.
+    fn detail(&self, e: &Entry<'_>, id: &str, group: usize) -> EntryDetail {
+        let f = Fields::of(e);
 
         let mut group_path = Vec::new();
         let mut cur = Some(group);
@@ -471,7 +520,7 @@ impl Vault {
 
         let (icon, custom_icon) = icon_of(e.icon_id(), e.custom_icon(), ICON_KEY);
         let times = e.times();
-        Some(EntryDetail {
+        EntryDetail {
             id: id.to_string(),
             group_id: self.groups[group].key.clone(),
             group_path,
@@ -490,7 +539,7 @@ impl Vault {
             attachments,
             icon,
             custom_icon,
-        })
+        }
     }
 
     /// One field's value, for `reveal_field` (and, from M3, copying). The
@@ -810,12 +859,21 @@ mod tests {
             for s in v.entries(&g.id).unwrap() {
                 json += &serde_json::to_string(&s).unwrap();
                 json += &serde_json::to_string(&v.entry(&s.id).unwrap()).unwrap();
+                for h in v.history(&s.id).unwrap() {
+                    json += &serde_json::to_string(&h).unwrap();
+                    json +=
+                        &serde_json::to_string(&v.history_entry(&s.id, h.index).unwrap()).unwrap();
+                }
             }
         }
         json += &serde_json::to_string(&v.search("")).unwrap();
 
         let mut checked = 0;
-        for e in v.db.entries() {
+        let versions =
+            v.db.entries()
+                .into_iter()
+                .flat_map(|e| std::iter::once(e).chain(e.history().collect::<Vec<_>>()));
+        for e in versions {
             for f in e.fields() {
                 let k = f.key();
                 let secret = f.protected() || is_otp_field(&k);
