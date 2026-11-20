@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "mikoshi"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "log",
  "mikoshi-core",
