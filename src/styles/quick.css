@@ -1,17 +1,14 @@
-/* Quick search window: a transparent borderless window; the panel and its
-   shadow are drawn here, with some margin around it for the shadow. The panel
-   is the one thing that floats: paper at partial opacity, blurred, with a
-   hairline edge. (A WebView cannot blur other programs behind it, so the
-   blur only reaches what is inside the window.) */
+/* Quick search window. On Windows 11 it is frosted glass drawn by Windows
+   (html.glass, see windows::quick_glass): the window is the panel, and
+   Windows blurs what is behind it and draws the rounded corners, the edge
+   and the shadow; the page only lays a thin paper tint over the glass.
+   Elsewhere it is a transparent borderless window and the panel and its
+   shadow are drawn here, with some margin around it for the shadow. (A
+   WebView cannot blur other programs behind it; only Windows can.)
 
-/* the window itself is transparent (the panel and its shadow are the only
-   thing drawn); in a browser there is no transparency, so it stands in */
-html.browser.window-quick {
-  background: var(--paper-bg);
-}
-/* the theme is on data-theme; the window's own background must follow it,
-   otherwise the transparent window shows the host's colour behind the panel */
-html[data-theme].window-quick,
+   The window itself stays transparent (base.css): only the panel is drawn.
+   A browser has no transparency, so there the page colour stands in. */
+html.browser.window-quick,
 html.browser[data-theme].window-quick {
   background: var(--paper-bg);
 }
@@ -93,11 +90,11 @@ html.browser[data-theme].window-quick {
   align-items: center;
   column-gap: 12px;
   padding: 0 4px 0 6px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--qs-line);
   color: var(--ink-2);
 }
 .qr:first-child {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--qs-line);
 }
 .qr.on {
   color: var(--ink);
@@ -192,6 +189,31 @@ html.browser[data-theme].window-quick {
   font-size: var(--fs-body);
   letter-spacing: 0;
   color: var(--ink);
+}
+
+/* ---- glass: the window is the panel */
+html.glass .quick-stage {
+  height: auto;
+  display: block;
+  padding: 0;
+}
+html.glass .qs {
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: var(--glass-tint) var(--paper);
+  backdrop-filter: none;
+  box-shadow: none;
+  /* the glass is already there; only the contents come in */
+  animation: none;
+}
+html.glass .qs > * {
+  animation: fade-in var(--t-normal) linear;
+}
+/* the icon tiles and keycaps use the same thin ink lines as the list */
+.qs .avatar,
+.qs kbd {
+  border-color: var(--qs-line);
 }
 
 @keyframes qs-in {

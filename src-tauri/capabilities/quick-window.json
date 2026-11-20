@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-set-theme",
+    "core:window:allow-set-size",
     "allow-app-info",
     "allow-get-settings",
     "allow-vault-status",

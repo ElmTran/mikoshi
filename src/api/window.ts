@@ -1,5 +1,6 @@
 // Window controls. No-ops outside Tauri so the UI also runs in a browser.
 
+import { LogicalSize } from '@tauri-apps/api/dpi';
 import { getCurrentWindow, type Theme } from '@tauri-apps/api/window';
 import { isTauri } from './index';
 
@@ -30,5 +31,9 @@ export const appWindow = {
   },
   /** the window's current theme; null outside Tauri */
   theme: async (): Promise<Theme | null> => (isTauri ? win().theme() : null),
+  /** in logical pixels */
+  setSize: async (width: number, height: number) => {
+    if (isTauri) await win().setSize(new LogicalSize(width, height));
+  },
   onResized: async (fn: () => void): Promise<() => void> => (isTauri ? win().onResized(fn) : () => {}),
 };

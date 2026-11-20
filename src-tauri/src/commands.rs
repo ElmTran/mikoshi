@@ -36,6 +36,9 @@ pub struct AppInfo {
     pub demo: bool,
     /// Started with Windows: the main window stays hidden until asked for
     pub start_hidden: bool,
+    /// The quick search box is frosted glass drawn by Windows (see
+    /// windows::quick_glass)
+    pub quick_glass: bool,
 }
 
 #[derive(Serialize)]
@@ -105,6 +108,7 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         demo: false,
         start_hidden: state.start_hidden,
+        quick_glass: crate::windows::quick_glass(),
     }
 }
 

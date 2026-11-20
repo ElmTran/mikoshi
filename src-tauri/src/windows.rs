@@ -8,6 +8,7 @@
 use std::sync::Mutex;
 
 use tauri::webview::PageLoadEvent;
+use tauri::window::{Effect, EffectsBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -25,11 +26,17 @@ pub struct PreviousWindow(Mutex<Option<isize>>);
 /// after the app state is registered; see the note there.
 pub fn create_all(app: &AppHandle) -> tauri::Result<()> {
     for config in &app.config().app.windows {
-        // No window effects: the main window paints its own paper background,
-        // and the quick search box draws its own panel (rounded, with a
-        // shadow) on a transparent window.
-        #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+        // The main window paints its own paper background. The quick search
+        // box is frosted glass on Windows 11 (see quick_glass); elsewhere
+        // it draws its own panel on a transparent window.
         let mut builder = WebviewWindowBuilder::from_config(app, config)?;
+        if config.label == "quick" && quick_glass() {
+            let (width, height) = QUICK_GLASS_SIZE;
+            builder = builder
+                .effects(EffectsBuilder::new().effect(Effect::Acrylic).build())
+                .shadow(true)
+                .inner_size(width, height);
+        }
         // dev-desktop mode (see `dev_desktop`): the WebView must not grab the
         // keyboard focus when it is made, which would activate the window
         #[cfg(debug_assertions)]
@@ -326,8 +333,22 @@ pub fn show_main_if_frontend_is_stuck(app: &AppHandle) {
     });
 }
 
-/// Size of the quick search window, in logical pixels. The panel inside is
-/// smaller; the rest is transparent margin for its shadow.
+/// Whether the quick search box is frosted glass: Windows 11 (build 22000
+/// and later) blurs what is behind it (Acrylic), rounds its corners and
+/// draws its shadow and edge. The window is then exactly the panel; the page
+/// fits its height to the content (QuickApp). On Windows 10 the corners
+/// would stay square, so there the page draws a rounded panel with its own
+/// shadow on a transparent window, as before.
+pub fn quick_glass() -> bool {
+    windows_version::OsVersion::current().build >= 22000
+}
+
+/// Size of the glass quick search window when it is made, in logical
+/// pixels: the panel itself. The page then fits the height to its content.
+const QUICK_GLASS_SIZE: (f64, f64) = (620.0, 476.0);
+
+/// Size of the quick search window without glass: the panel plus
+/// transparent margin for its shadow.
 const QUICK_SIZE: (f64, f64) = (660.0, 520.0);
 
 /// Shows the quick search box centred on the current screen, from the
@@ -353,7 +374,16 @@ pub fn show_quick_mode(app: &AppHandle, pick: bool) -> tauri::Result<()> {
         if !w.is_visible().unwrap_or(false) {
             remember_foreground(app);
         }
-        w.set_size(tauri::LogicalSize::new(QUICK_SIZE.0, QUICK_SIZE.1))?;
+        let (width, height) = if quick_glass() {
+            // keep the height the page fitted last time: resetting it would
+            // show the glass at the wrong height for a moment
+            let scale = w.scale_factor()?;
+            let height = f64::from(w.inner_size()?.height) / scale;
+            (QUICK_GLASS_SIZE.0, height)
+        } else {
+            QUICK_SIZE
+        };
+        w.set_size(tauri::LogicalSize::new(width, height))?;
         w.center()?;
         show(&w)?;
         if !dev_quiet() {

@@ -99,6 +99,8 @@ export interface AppInfo {
   demo: boolean;
   /** started with Windows: the main window stays hidden until asked for */
   startHidden: boolean;
+  /** the quick search box is frosted glass drawn by Windows 11 */
+  quickGlass: boolean;
 }
 
 export interface CopyResult {

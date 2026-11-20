@@ -314,7 +314,7 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
   const result = ((): unknown => {
     switch (cmd) {
       case 'app_info':
-        return { version: '0.1.0', demo: true, startHidden: false };
+        return { version: '0.1.0', demo: true, startHidden: false, quickGlass: false };
       case 'get_settings':
         return loadSettings();
       case 'set_settings': {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { api, isTauri, listen } from '../api';
+import { appWindow } from '../api/window';
 import { AppError, Field, type EntrySummary, type QuickShown, type VaultStatus } from '../api/types';
 import { EntryIcon, Keys } from '../components/bits';
 import { Icon } from '../components/Icon';
@@ -62,6 +63,36 @@ export function QuickApp() {
     ];
     return () => offs.forEach((p) => void p.then((f) => f()));
   }, []);
+
+  // Windows 11: the window is the frosted panel, drawn by Windows; its
+  // height follows the content (windows::quick_glass)
+  const [glass, setGlass] = useState(false);
+  useEffect(() => {
+    if (!isTauri) return;
+    api.appInfo().then(
+      (info) => {
+        document.documentElement.classList.toggle('glass', info.quickGlass);
+        setGlass(info.quickGlass);
+      },
+      () => {},
+    );
+  }, []);
+  useEffect(() => {
+    const el = panel.current;
+    if (!glass || !el) return;
+    let last = 0;
+    const fit = () => {
+      const height = Math.ceil(el.getBoundingClientRect().height);
+      if (height > 0 && Math.abs(height - last) > 1) {
+        last = height;
+        void appWindow.setSize(window.innerWidth, height).catch(() => {});
+      }
+    };
+    const watch = new ResizeObserver(fit);
+    watch.observe(el);
+    fit();
+    return () => watch.disconnect();
+  }, [glass, opened]);
 
   const q = query.trim();
   const terms = useMemo(() => searchTerms(q), [q]);
