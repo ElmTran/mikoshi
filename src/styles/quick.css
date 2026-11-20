@@ -4,7 +4,15 @@
    hairline edge. (A WebView cannot blur other programs behind it, so the
    blur only reaches what is inside the window.) */
 
+/* the window itself is transparent (the panel and its shadow are the only
+   thing drawn); in a browser there is no transparency, so it stands in */
 html.browser.window-quick {
+  background: var(--paper-bg);
+}
+/* the theme is on data-theme; the window's own background must follow it,
+   otherwise the transparent window shows the host's colour behind the panel */
+html[data-theme].window-quick,
+html.browser[data-theme].window-quick {
   background: var(--paper-bg);
 }
 
@@ -26,6 +34,7 @@ html.browser.window-quick {
   border-radius: 18px;
   background: var(--glass) var(--paper);
   border: 1px solid var(--line-2);
+
   backdrop-filter: blur(14px) saturate(1.05);
   box-shadow: var(--shadow-quick);
   animation: qs-in var(--t-slow) var(--ease-decelerate);

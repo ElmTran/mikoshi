@@ -828,12 +828,13 @@
 .flyout-label {
   margin-bottom: 8px;
 }
+/* a borderless group: the options sit on the paper, the chosen one is a
+   solid ink pill (a 1px border clipped the rounded ends of the pill) */
 .segmented {
   display: flex;
   gap: 2px;
-  padding: 3px;
+  padding: 0;
   border-radius: var(--r-pill);
-  border: 1px solid var(--line-2);
 }
 .segmented > .seg {
   flex: 1;
@@ -854,6 +855,11 @@
 }
 .segmented > .seg:hover {
   color: var(--ink);
+  background: var(--hover);
+}
+.segmented > .seg.on:hover {
+  background: var(--btn-hover);
+  color: var(--btn-ink);
 }
 .segmented > .seg span {
   min-width: 0;
