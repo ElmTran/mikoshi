@@ -15,11 +15,13 @@
 use std::time::{Duration, Instant};
 
 use mikoshi_core::Vault;
-use mikoshi_core::autotype::{self, Key, Mods, SequenceError, Step};
+use mikoshi_core::autotype::{self, DateTime, Derived, Key, Mods, SequenceError, Step};
 use mikoshi_core::model::fields;
 use mikoshi_core::totp::TotpError;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
+use windows::Win32::System::Diagnostics::Debug::Beep;
+use windows::Win32::System::SystemInformation::{GetLocalTime, GetSystemTime};
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -27,9 +29,11 @@ use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayout, GetKeyboardLayoutList, HKL, INPUT, INPUT_0,
     INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
-    VK_ESCAPE, VK_F1, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN,
-    VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VkKeyScanW,
+    KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_ADD, VK_APPS, VK_BACK, VK_CANCEL, VK_CAPITAL,
+    VK_CONTROL, VK_DELETE, VK_DIVIDE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_HELP, VK_HOME,
+    VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_MULTIPLY, VK_NEXT, VK_NUMLOCK, VK_NUMPAD0, VK_PRIOR,
+    VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RWIN, VK_SCROLL, VK_SHIFT, VK_SNAPSHOT,
+    VK_SPACE, VK_SUBTRACT, VK_TAB, VK_UP, VkKeyScanW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
@@ -61,10 +65,18 @@ pub enum TypeError {
 
 /// One thing to do, with field values already filled in.
 enum Action {
+    /// typed as Unicode, independent of the keyboard layout
     Text(Zeroizing<String>),
+    /// `{MODE=VIRTUAL}`: characters pressed as keys of the layout; each is a
+    /// `VkKeyScanW` result (key in the low byte, Shift/Ctrl/Alt in the high)
+    LayoutKeys(Zeroizing<Vec<u16>>),
     Key(Key, Mods),
     Delay(u32),
     KeyDelay(u32),
+    Beep {
+        hz: u32,
+        ms: u32,
+    },
 }
 
 /// A sequence ready to type: all values fetched, nothing left to fail on
@@ -91,16 +103,17 @@ pub fn plan(
     }
     let steps = autotype::parse(sequence).map_err(sequence_error)?;
     let mut actions = Vec::with_capacity(steps.len());
+    let mut layout_keys = false;
     for step in steps {
-        actions.push(match step {
-            Step::Text(t) => Action::Text(Zeroizing::new(t)),
+        let value = match step {
+            Step::Text(t) => Zeroizing::new(t),
             Step::Field(name) => {
                 let value = vault
                     .copy_value(entry_id, &name)
                     .ok_or(TypeError::MissingField)?
                     .map_err(|_| TypeError::MissingField)?
                     .0;
-                Action::Text(Zeroizing::new(value.expose().to_string()))
+                Zeroizing::new(value.expose().to_string())
             }
             Step::Totp => {
                 let code = vault
@@ -108,15 +121,88 @@ pub fn plan(
                     .ok_or(TypeError::NoTotp)?
                     .map_err(|_: TotpError| TypeError::NoTotp)?
                     .0;
-                Action::Text(Zeroizing::new(code.expose().to_string()))
+                Zeroizing::new(code.expose().to_string())
             }
-            Step::Key(k, m) => Action::Key(k, m),
-            Step::Delay(ms) => Action::Delay(ms),
-            Step::KeyDelay(ms) => Action::KeyDelay(ms),
+            Step::Derived(d) => Zeroizing::new(derived(vault, entry_id, d)?),
+            Step::Date { part, utc } => Zeroizing::new(part.format(now(utc))),
+            Step::VirtualMode => {
+                layout_keys = true;
+                continue;
+            }
+            Step::Key(k, m) => {
+                actions.push(Action::Key(k, m));
+                continue;
+            }
+            Step::Delay(ms) => {
+                actions.push(Action::Delay(ms));
+                continue;
+            }
+            Step::KeyDelay(ms) => {
+                actions.push(Action::KeyDelay(ms));
+                continue;
+            }
+            Step::Beep { hz, ms } => {
+                actions.push(Action::Beep { hz, ms });
+                continue;
+            }
+        };
+        actions.push(if layout_keys {
+            Action::LayoutKeys(on_layout(&value)?)
+        } else {
+            Action::Text(value)
         });
     }
     check_window(target)?;
     Ok(Plan { target, actions })
+}
+
+/// `{GROUP}`, `{GROUP_PATH}`, `{UUID}`, `{URL:…}` for the entry.
+fn derived(vault: &Vault, entry_id: &str, d: Derived) -> Result<String, TypeError> {
+    let entry = vault.entry(entry_id).ok_or(TypeError::MissingField)?;
+    Ok(match d {
+        Derived::Group => entry.group_path.last().cloned().unwrap_or_default(),
+        // like KeePass: without the root group, unless the entry is in it
+        Derived::GroupPath => match entry.group_path.as_slice() {
+            [root] => root.clone(),
+            [_, below @ ..] => below.join("."),
+            [] => String::new(),
+        },
+        Derived::Uuid => entry.id.replace('-', "").to_uppercase(),
+        Derived::Url(part) => part.of(&entry.url),
+    })
+}
+
+/// The date and time now, local or UTC.
+fn now(utc: bool) -> DateTime {
+    // SAFETY: plain queries
+    let t = unsafe { if utc { GetSystemTime() } else { GetLocalTime() } };
+    DateTime {
+        year: t.wYear,
+        month: t.wMonth,
+        day: t.wDay,
+        hour: t.wHour,
+        minute: t.wMinute,
+        second: t.wSecond,
+    }
+}
+
+/// The keys that make each character on the current keyboard layout. A
+/// character the layout cannot make fails the whole sequence: nothing is
+/// typed rather than half a password.
+fn on_layout(text: &str) -> Result<Zeroizing<Vec<u16>>, TypeError> {
+    let mut keys = Zeroizing::new(Vec::with_capacity(text.len()));
+    for unit in text.encode_utf16() {
+        // SAFETY: plain query; -1 means no key on this layout makes it
+        let scan = unsafe { VkKeyScanW(unit) };
+        if scan == -1 {
+            log::warn!(
+                "auto-type: {{MODE=VIRTUAL}} text has a character the keyboard layout cannot make"
+            );
+            return Err(TypeError::BadSequence);
+        }
+        keys.push(scan as u16);
+    }
+    Ok(keys)
 }
 
 /// The window exists and Windows will let us type into it.
@@ -186,6 +272,24 @@ pub fn run(plan: Plan, key_delay_ms: u32) -> Result<(), TypeError> {
                     press(*key, *mods)?;
                     keys += 1;
                     std::thread::sleep(delay);
+                }
+                Action::LayoutKeys(scans) => {
+                    for &scan in scans.iter() {
+                        ensure_front(target)?;
+                        let [vk, state] = scan.to_le_bytes();
+                        let mods = Mods {
+                            shift: state & 1 != 0,
+                            ctrl: state & 2 != 0,
+                            alt: state & 4 != 0,
+                        };
+                        press_vk(VIRTUAL_KEY(u16::from(vk)), false, mods)?;
+                        keys += 1;
+                        std::thread::sleep(delay);
+                    }
+                }
+                Action::Beep { hz, ms } => {
+                    // SAFETY: plain call; blocks for the tone's length
+                    let _ = unsafe { Beep(*hz, *ms) };
                 }
                 Action::Delay(ms) => std::thread::sleep(Duration::from_millis(u64::from(*ms))),
                 Action::KeyDelay(ms) => delay = Duration::from_millis(u64::from(*ms)),
@@ -398,7 +502,8 @@ fn unicode(unit: u16, up: bool) -> INPUT {
 }
 
 /// The virtual key for a named key, and whether it is an "extended" key
-/// (the arrow block), which needs a flag to not be read as the numpad.
+/// (the arrow block, the Windows keys, numpad `/`), which needs a flag to
+/// not be read as its twin on the numpad or the left side.
 fn virtual_key(key: Key) -> Result<(VIRTUAL_KEY, bool), TypeError> {
     Ok(match key {
         Key::Tab => (VK_TAB, false),
@@ -417,6 +522,25 @@ fn virtual_key(key: Key) -> Result<(VIRTUAL_KEY, bool), TypeError> {
         Key::Left => (VK_LEFT, true),
         Key::Right => (VK_RIGHT, true),
         Key::F(n) => (VIRTUAL_KEY(VK_F1.0 + u16::from(n) - 1), false),
+        Key::Win => (VK_LWIN, true),
+        Key::RightWin => (VK_RWIN, true),
+        Key::Apps => (VK_APPS, true),
+        Key::CapsLock => (VK_CAPITAL, false),
+        Key::NumLock => (VK_NUMLOCK, true),
+        Key::ScrollLock => (VK_SCROLL, false),
+        Key::PrintScreen => (VK_SNAPSHOT, true),
+        // as KeePass: Ctrl+Break's key
+        Key::Break => (VK_CANCEL, true),
+        Key::Help => (VK_HELP, false),
+        Key::NumAdd => (VK_ADD, false),
+        Key::NumSubtract => (VK_SUBTRACT, false),
+        Key::NumMultiply => (VK_MULTIPLY, false),
+        Key::NumDivide => (VK_DIVIDE, true),
+        Key::Numpad(n) => (VIRTUAL_KEY(VK_NUMPAD0.0 + u16::from(n)), false),
+        Key::Vk { code, extended } => {
+            let vk = VIRTUAL_KEY(u16::from(code));
+            (vk, extended.unwrap_or_else(|| is_extended(vk)))
+        }
         Key::Char(c) => {
             let mut buf = [0u16; 2];
             let units = c.encode_utf16(&mut buf);
@@ -433,9 +557,40 @@ fn virtual_key(key: Key) -> Result<(VIRTUAL_KEY, bool), TypeError> {
     })
 }
 
+/// Keys that need the extended flag, for `{VKEY n}` without `-EX`/`-NX`.
+fn is_extended(vk: VIRTUAL_KEY) -> bool {
+    [
+        VK_INSERT,
+        VK_DELETE,
+        VK_HOME,
+        VK_END,
+        VK_PRIOR,
+        VK_NEXT,
+        VK_UP,
+        VK_DOWN,
+        VK_LEFT,
+        VK_RIGHT,
+        VK_LWIN,
+        VK_RWIN,
+        VK_APPS,
+        VK_NUMLOCK,
+        VK_SNAPSHOT,
+        VK_CANCEL,
+        VK_DIVIDE,
+        VK_RCONTROL,
+        VK_RMENU,
+    ]
+    .contains(&vk)
+}
+
 /// A named key, with its modifiers held around it.
 fn press(key: Key, mods: Mods) -> Result<(), TypeError> {
     let (vk, extended) = virtual_key(key)?;
+    press_vk(vk, extended, mods)
+}
+
+/// A virtual key, with its modifiers held around it.
+fn press_vk(vk: VIRTUAL_KEY, extended: bool, mods: Mods) -> Result<(), TypeError> {
     let held: Vec<VIRTUAL_KEY> = [
         (mods.ctrl, VK_CONTROL),
         (mods.alt, VK_MENU),

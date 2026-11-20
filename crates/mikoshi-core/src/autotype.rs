@@ -139,8 +139,179 @@ pub enum Key {
     Escape,
     /// F1–F24
     F(u8),
+    /// `{WIN}` / `{LWIN}`
+    Win,
+    RightWin,
+    /// the context-menu key
+    Apps,
+    CapsLock,
+    NumLock,
+    ScrollLock,
+    PrintScreen,
+    Break,
+    Help,
+    /// the numpad's `+` `-` `*` `/`
+    NumAdd,
+    NumSubtract,
+    NumMultiply,
+    NumDivide,
+    /// numpad 0–9
+    Numpad(u8),
+    /// `{VKEY n}`: a virtual-key code. `extended`: `None` decides by the
+    /// key, `{VKEY-EX n}` forces the extended flag on, `{VKEY-NX n}` off.
+    Vk {
+        code: u8,
+        extended: Option<bool>,
+    },
     /// a character key, pressed rather than typed: only with modifiers
     Char(char),
+}
+
+/// A part of the current date and time (`{DT_SIMPLE}`, `{DT_YEAR}`, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatePart {
+    /// `yyyyMMddHHmmss`
+    Simple,
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second,
+}
+
+/// The same parts as numbers, for `DatePart::format`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DateTime {
+    pub year: u16,
+    pub month: u16,
+    pub day: u16,
+    pub hour: u16,
+    pub minute: u16,
+    pub second: u16,
+}
+
+impl DatePart {
+    /// KeePass's formats: four-digit year, everything else two digits.
+    pub fn format(self, t: DateTime) -> String {
+        match self {
+            DatePart::Simple => format!(
+                "{:04}{:02}{:02}{:02}{:02}{:02}",
+                t.year, t.month, t.day, t.hour, t.minute, t.second
+            ),
+            DatePart::Year => format!("{:04}", t.year),
+            DatePart::Month => format!("{:02}", t.month),
+            DatePart::Day => format!("{:02}", t.day),
+            DatePart::Hour => format!("{:02}", t.hour),
+            DatePart::Minute => format!("{:02}", t.minute),
+            DatePart::Second => format!("{:02}", t.second),
+        }
+    }
+}
+
+/// A value worked out from the entry rather than read from one field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Derived {
+    /// `{GROUP}`: the name of the entry's group
+    Group,
+    /// `{GROUP_PATH}`: the groups below the root, joined with `.`
+    GroupPath,
+    /// `{UUID}`: 32 hex digits, upper case
+    Uuid,
+    /// `{URL:…}`: a part of the entry's URL
+    Url(UrlPart),
+}
+
+/// The parts KeePass's `{URL:…}` placeholders name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UrlPart {
+    /// `{URL:RMVSCM}` / `{URL:WITHOUTSCHEME}`: everything after `scheme://`
+    WithoutScheme,
+    /// `{URL:SCM}`
+    Scheme,
+    /// `{URL:HOST}`
+    Host,
+    /// `{URL:PORT}`: the port, or the scheme's usual one
+    Port,
+    /// `{URL:PATH}`: from the first `/` after the host, without `?…` `#…`
+    Path,
+    /// `{URL:QUERY}`: `?…` including the `?`
+    Query,
+    /// `{URL:FRAGMENT}`: `#…` including the `#`
+    Fragment,
+    /// `{URL:USERINFO}`: `user:password` before the `@`
+    UserInfo,
+    /// `{URL:USERNAME}`
+    UserName,
+    /// `{URL:PASSWORD}`
+    Password,
+}
+
+impl UrlPart {
+    /// This part of `url`, empty when the URL does not have it. No
+    /// normalising: the text comes back as written.
+    pub fn of(self, url: &str) -> String {
+        let url = url.trim();
+        let (scheme, rest) = match url.split_once("://") {
+            Some((s, r))
+                if !s.is_empty()
+                    && s.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c)) =>
+            {
+                (s, r)
+            }
+            _ => ("", url),
+        };
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let (authority, tail) = rest.split_at(authority_end);
+        let (user_info, host_port) = match authority.rsplit_once('@') {
+            Some((u, h)) => (u, h),
+            None => ("", authority),
+        };
+        let (host, port) = if let Some(end) = host_port
+            .strip_prefix('[')
+            .and_then(|_| host_port.find(']'))
+        {
+            let (h, p) = host_port.split_at(end + 1);
+            (h, p.strip_prefix(':').unwrap_or(""))
+        } else {
+            match host_port.rsplit_once(':') {
+                Some((h, p)) => (h, p),
+                None => (host_port, ""),
+            }
+        };
+        let fragment_at = tail.find('#').unwrap_or(tail.len());
+        let (before_fragment, fragment) = tail.split_at(fragment_at);
+        let query_at = before_fragment.find('?').unwrap_or(before_fragment.len());
+        let (path, query) = before_fragment.split_at(query_at);
+        match self {
+            UrlPart::WithoutScheme => rest.to_string(),
+            UrlPart::Scheme => scheme.to_string(),
+            UrlPart::Host => host.to_string(),
+            UrlPart::Port => {
+                if !port.is_empty() {
+                    port.to_string()
+                } else {
+                    match scheme.to_ascii_lowercase().as_str() {
+                        "http" => "80",
+                        "https" => "443",
+                        "ftp" => "21",
+                        _ => "",
+                    }
+                    .to_string()
+                }
+            }
+            UrlPart::Path => path.to_string(),
+            UrlPart::Query => query.to_string(),
+            UrlPart::Fragment => fragment.to_string(),
+            UrlPart::UserInfo => user_info.to_string(),
+            UrlPart::UserName => user_info
+                .split_once(':')
+                .map_or(user_info, |(u, _)| u)
+                .to_string(),
+            UrlPart::Password => user_info.split_once(':').map_or("", |(_, p)| p).to_string(),
+        }
+    }
 }
 
 /// One step of a parsed sequence.
@@ -151,13 +322,29 @@ pub enum Step {
     /// a field's value: `Title`, `UserName`, `Password`, `URL`, `Notes`, or a
     /// custom field (`{S:name}`)
     Field(String),
-    /// the current TOTP code
+    /// the current TOTP code (`{TOTP}`, KeePass's `{TIMEOTP}`)
     Totp,
+    /// a value worked out from the entry: group, UUID, URL parts
+    Derived(Derived),
+    /// the current date and time, local or UTC
+    Date {
+        part: DatePart,
+        utc: bool,
+    },
     Key(Key, Mods),
     /// `{DELAY n}`: wait n milliseconds
     Delay(u32),
     /// `{DELAY=n}`: from here on, n milliseconds between keys
     KeyDelay(u32),
+    /// `{BEEP f d}`: a tone of f Hz for d milliseconds
+    Beep {
+        hz: u32,
+        ms: u32,
+    },
+    /// KeePassXC's `{MODE=VIRTUAL}`: from here on, characters are pressed as
+    /// keys of the keyboard layout instead of sent as Unicode (for remote
+    /// desktops and games that ignore Unicode input)
+    VirtualMode,
 }
 
 /// Why a sequence cannot be typed. Nothing is typed then: half a login is
@@ -182,16 +369,28 @@ pub enum SequenceError {
 const MAX_DELAY_MS: u32 = 10_000;
 const MAX_REPEAT: u32 = 100;
 
-/// Parses a KeePass auto-type sequence.
+/// Parses a KeePass auto-type sequence. Covers what KeePass 2 and KeePassXC
+/// both use, minus what needs a dialog or runs programs.
 ///
-/// Placeholders (case-insensitive): `{USERNAME}` `{PASSWORD}` `{URL}`
-/// `{TITLE}` `{NOTES}` `{TOTP}` `{S:name}`; keys `{TAB}` `{ENTER}` `{SPACE}`
-/// `{BACKSPACE}`/`{BS}`/`{BKSP}` `{DELETE}`/`{DEL}` `{INSERT}`/`{INS}`
-/// `{HOME}` `{END}` `{PGUP}` `{PGDN}` `{UP}` `{DOWN}` `{LEFT}` `{RIGHT}`
-/// `{ESC}` `{F1}`–`{F24}`, a key with a count repeats (`{TAB 2}`);
-/// `{DELAY n}` and `{DELAY=n}`. `~` is Enter. `+` `^` `%` hold Shift, Ctrl,
-/// Alt for the next key or the next `(…)` group. `{+}` `{^}` `{%}` `{~}`
-/// `{(}` `{)}` `{{}` `{}}` type the character itself.
+/// Placeholders (case-insensitive):
+/// - values: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:name}`
+///   `{TOTP}`/`{TIMEOTP}` `{GROUP}` `{GROUP_PATH}` `{UUID}`
+///   `{URL:RMVSCM|WITHOUTSCHEME|SCM|HOST|PORT|PATH|QUERY|FRAGMENT|USERINFO|USERNAME|PASSWORD}`
+///   `{DT_SIMPLE}` `{DT_YEAR}` … `{DT_SECOND}` and the `{DT_UTC_…}` forms
+/// - keys: `{TAB}` `{ENTER}` `{SPACE}` `{BACKSPACE}`/`{BS}`/`{BKSP}`
+///   `{DELETE}`/`{DEL}` `{INSERT}`/`{INS}` `{HOME}` `{END}` `{PGUP}` `{PGDN}`
+///   `{UP}` `{DOWN}` `{LEFT}` `{RIGHT}` `{ESC}` `{F1}`–`{F24}` `{WIN}`/`{LWIN}`
+///   `{RWIN}` `{APPS}` `{CAPSLOCK}` `{NUMLOCK}` `{SCROLLLOCK}` `{PRTSC}`
+///   `{BREAK}` `{HELP}` `{ADD}` `{SUBTRACT}` `{MULTIPLY}` `{DIVIDE}`
+///   `{NUMPAD0}`–`{NUMPAD9}`, `{VKEY n}` `{VKEY-EX n}` `{VKEY-NX n}`; a named
+///   key with a count repeats (`{TAB 2}`)
+/// - actions: `{CLEARFIELD}` `{DELAY n}` `{DELAY=n}` `{BEEP hz ms}`
+///   `{MODE=VIRTUAL}`; `{C:comment}` types nothing
+/// - characters: `~` is Enter. `+` `^` `%` hold Shift, Ctrl, Alt for the
+///   next key or the next `(…)` group. `{+}` `{^}` `{%}` `{~}` `{(}` `{)}`
+///   `{{}` `{}}` `{[}` `{]}` and `{PLUS}` `{CARET}` `{PERCENT}` `{TILDE}`
+///   `{LEFTPAREN}` `{RIGHTPAREN}` `{LEFTBRACE}` `{RIGHTBRACE}` type the
+///   character itself.
 pub fn parse(sequence: &str) -> Result<Vec<Step>, SequenceError> {
     let mut p = Parser {
         chars: sequence.chars().collect(),
@@ -281,31 +480,45 @@ impl Parser {
         if let (Some(c), None) = (cs.next(), cs.next())
             && "+^%~(){}[]".contains(c)
         {
-            if mods.any() {
-                self.key(Key::Char(c), mods, 1);
-            } else {
-                self.text(c);
-            }
+            self.literal(c, mods);
             return Ok(());
         }
 
         if let Some(name) = body.strip_prefix("S:").or_else(|| body.strip_prefix("s:")) {
             return self.field(name.to_string(), mods);
         }
+        // `{C:…}`: a comment, typed as nothing
+        if body.starts_with("C:") || body.starts_with("c:") {
+            return no_mods(mods);
+        }
         let upper = body.to_uppercase();
         if let Some(n) = upper
             .strip_prefix("DELAY=")
             .or_else(|| upper.strip_prefix("DELAY "))
         {
-            if mods.any() {
-                return Err(SequenceError::DanglingModifier);
-            }
+            no_mods(mods)?;
             let ms = number(n, MAX_DELAY_MS)?;
             self.steps.push(if upper.starts_with("DELAY=") {
                 Step::KeyDelay(ms)
             } else {
                 Step::Delay(ms)
             });
+            return Ok(());
+        }
+        // the special characters by name
+        let named = match upper.as_str() {
+            "PLUS" => Some('+'),
+            "PERCENT" => Some('%'),
+            "CARET" => Some('^'),
+            "TILDE" => Some('~'),
+            "LEFTPAREN" => Some('('),
+            "RIGHTPAREN" => Some(')'),
+            "LEFTBRACE" => Some('{'),
+            "RIGHTBRACE" => Some('}'),
+            _ => None,
+        };
+        if let Some(c) = named {
+            self.literal(c, mods);
             return Ok(());
         }
         let field = match upper.as_str() {
@@ -319,12 +532,60 @@ impl Parser {
         if let Some(f) = field {
             return self.field(f.to_string(), mods);
         }
-        if upper == "TOTP" {
-            if mods.any() {
-                return Err(SequenceError::DanglingModifier);
-            }
-            self.steps.push(Step::Totp);
+        if let Some(step) = value_placeholder(&upper) {
+            no_mods(mods)?;
+            self.steps.push(step);
             return Ok(());
+        }
+        match upper.as_str() {
+            // KeePassXC's way: from the start of the field select to its
+            // end, then delete. Works in multi-line fields too.
+            "CLEARFIELD" => {
+                no_mods(mods)?;
+                let ctrl = Mods {
+                    ctrl: true,
+                    ..Mods::default()
+                };
+                let ctrl_shift = Mods {
+                    shift: true,
+                    ..ctrl
+                };
+                self.key(Key::Home, ctrl, 1);
+                self.key(Key::End, ctrl_shift, 1);
+                self.key(Key::Backspace, Mods::default(), 1);
+                return Ok(());
+            }
+            "MODE=VIRTUAL" => {
+                no_mods(mods)?;
+                self.steps.push(Step::VirtualMode);
+                return Ok(());
+            }
+            _ => {}
+        }
+        if let Some(args) = upper.strip_prefix("BEEP ") {
+            no_mods(mods)?;
+            let (hz, ms) = args
+                .trim()
+                .split_once(' ')
+                .ok_or(SequenceError::BadNumber)?;
+            let hz = number(hz, 32_767)?;
+            if hz < 37 {
+                return Err(SequenceError::BadNumber);
+            }
+            let ms = number(ms, MAX_DELAY_MS)?;
+            self.steps.push(Step::Beep { hz, ms });
+            return Ok(());
+        }
+        for (prefix, extended) in [
+            ("VKEY-EX ", Some(true)),
+            ("VKEY-NX ", Some(false)),
+            ("VKEY ", None),
+        ] {
+            if let Some(n) = upper.strip_prefix(prefix) {
+                let code = virtual_key_code(n)?;
+                self.key(Key::Vk { code, extended }, mods, 1);
+                return Ok(());
+            }
         }
         // a named key, optionally with a repeat count: {TAB 3}
         let (name, count) = match upper.split_once(' ') {
@@ -347,6 +608,23 @@ impl Parser {
             "LEFT" => Key::Left,
             "RIGHT" => Key::Right,
             "ESC" | "ESCAPE" => Key::Escape,
+            "WIN" | "LWIN" => Key::Win,
+            "RWIN" => Key::RightWin,
+            "APPS" => Key::Apps,
+            "CAPSLOCK" => Key::CapsLock,
+            "NUMLOCK" => Key::NumLock,
+            "SCROLLLOCK" => Key::ScrollLock,
+            "PRTSC" => Key::PrintScreen,
+            "BREAK" => Key::Break,
+            "HELP" => Key::Help,
+            "ADD" => Key::NumAdd,
+            "SUBTRACT" => Key::NumSubtract,
+            "MULTIPLY" => Key::NumMultiply,
+            "DIVIDE" => Key::NumDivide,
+            n if n.starts_with("NUMPAD") => match n["NUMPAD".len()..].parse::<u8>() {
+                Ok(d @ 0..=9) if n.len() == "NUMPAD".len() + 1 => Key::Numpad(d),
+                _ => return Err(SequenceError::Unknown(body.to_string())),
+            },
             f if f.starts_with('F') => match f[1..].parse::<u8>() {
                 Ok(n @ 1..=24) => Key::F(n),
                 _ => return Err(SequenceError::Unknown(body.to_string())),
@@ -355,6 +633,15 @@ impl Parser {
         };
         self.key(key, mods, count);
         Ok(())
+    }
+
+    /// A character typed as itself, or pressed when modifiers are held.
+    fn literal(&mut self, c: char, mods: Mods) {
+        if mods.any() {
+            self.key(Key::Char(c), mods, 1);
+        } else {
+            self.text(c);
+        }
     }
 
     fn field(&mut self, name: String, mods: Mods) -> Result<(), SequenceError> {
@@ -387,6 +674,70 @@ fn merge(a: Mods, b: Mods) -> Mods {
         ctrl: a.ctrl || b.ctrl,
         alt: a.alt || b.alt,
     }
+}
+
+/// Placeholders that stand for a value, not a key, cannot take `+` `^` `%`.
+fn no_mods(mods: Mods) -> Result<(), SequenceError> {
+    if mods.any() {
+        Err(SequenceError::DanglingModifier)
+    } else {
+        Ok(())
+    }
+}
+
+/// `{TIMEOTP}`, `{GROUP}`, `{UUID}`, `{URL:…}`, `{DT_…}` (upper case).
+fn value_placeholder(upper: &str) -> Option<Step> {
+    let derived = |d| Some(Step::Derived(d));
+    match upper {
+        "TOTP" | "TIMEOTP" => return Some(Step::Totp),
+        "GROUP" => return derived(Derived::Group),
+        "GROUP_PATH" => return derived(Derived::GroupPath),
+        "UUID" => return derived(Derived::Uuid),
+        _ => {}
+    }
+    if let Some(part) = upper.strip_prefix("URL:") {
+        let part = match part {
+            "RMVSCM" | "WITHOUTSCHEME" => UrlPart::WithoutScheme,
+            "SCM" => UrlPart::Scheme,
+            "HOST" => UrlPart::Host,
+            "PORT" => UrlPart::Port,
+            "PATH" => UrlPart::Path,
+            "QUERY" => UrlPart::Query,
+            "FRAGMENT" => UrlPart::Fragment,
+            "USERINFO" => UrlPart::UserInfo,
+            "USERNAME" => UrlPart::UserName,
+            "PASSWORD" => UrlPart::Password,
+            _ => return None,
+        };
+        return derived(Derived::Url(part));
+    }
+    let rest = upper.strip_prefix("DT_")?;
+    let (utc, name) = match rest.strip_prefix("UTC_") {
+        Some(n) => (true, n),
+        None => (false, rest),
+    };
+    let part = match name {
+        "SIMPLE" => DatePart::Simple,
+        "YEAR" => DatePart::Year,
+        "MONTH" => DatePart::Month,
+        "DAY" => DatePart::Day,
+        "HOUR" => DatePart::Hour,
+        "MINUTE" => DatePart::Minute,
+        "SECOND" => DatePart::Second,
+        _ => return None,
+    };
+    Some(Step::Date { part, utc })
+}
+
+/// The number in `{VKEY n}`: decimal, or hex with `0x`. 1–254.
+fn virtual_key_code(text: &str) -> Result<u8, SequenceError> {
+    let text = text.trim();
+    let n = match text.strip_prefix("0X") {
+        Some(hex) => u8::from_str_radix(hex, 16).ok(),
+        None => text.parse::<u8>().ok(),
+    };
+    n.filter(|&n| (1..=254).contains(&n))
+        .ok_or(SequenceError::BadNumber)
 }
 
 fn number(text: &str, max: u32) -> Result<u32, SequenceError> {
@@ -571,5 +922,210 @@ mod tests {
     #[test]
     fn an_empty_sequence_types_nothing() {
         assert_eq!(parse("").unwrap(), vec![]);
+    }
+
+    #[test]
+    fn clearfield_selects_everything_and_deletes_it() {
+        let ctrl_shift = Mods {
+            shift: true,
+            ..CTRL
+        };
+        assert_eq!(
+            parse("{CLEARFIELD}{USERNAME}").unwrap(),
+            vec![
+                Step::Key(Key::Home, CTRL),
+                Step::Key(Key::End, ctrl_shift),
+                Step::Key(Key::Backspace, NONE),
+                field("UserName"),
+            ]
+        );
+        assert_eq!(parse("{clearfield}").unwrap().len(), 3);
+        assert_eq!(parse("^{CLEARFIELD}"), Err(SequenceError::DanglingModifier));
+    }
+
+    #[test]
+    fn special_characters_by_name() {
+        assert_eq!(
+            parse(
+                "{PLUS}{PERCENT}{CARET}{TILDE}{LEFTPAREN}{RIGHTPAREN}{LEFTBRACE}{RIGHTBRACE}{[}{]}"
+            )
+            .unwrap(),
+            vec![text("+%^~(){}[]")]
+        );
+        assert_eq!(
+            parse("^{PLUS}").unwrap(),
+            vec![Step::Key(Key::Char('+'), CTRL)]
+        );
+    }
+
+    #[test]
+    fn more_named_keys() {
+        assert_eq!(
+            parse("{WIN}{LWIN}{RWIN}{APPS}{CAPSLOCK}{NUMLOCK}{SCROLLLOCK}{PRTSC}{BREAK}{HELP}")
+                .unwrap(),
+            [
+                Key::Win,
+                Key::Win,
+                Key::RightWin,
+                Key::Apps,
+                Key::CapsLock,
+                Key::NumLock,
+                Key::ScrollLock,
+                Key::PrintScreen,
+                Key::Break,
+                Key::Help,
+            ]
+            .map(|k| Step::Key(k, NONE))
+        );
+        assert_eq!(
+            parse("{ADD}{SUBTRACT}{MULTIPLY}{DIVIDE}{NUMPAD0}{numpad9 2}").unwrap(),
+            [
+                Key::NumAdd,
+                Key::NumSubtract,
+                Key::NumMultiply,
+                Key::NumDivide,
+                Key::Numpad(0),
+                Key::Numpad(9),
+                Key::Numpad(9),
+            ]
+            .map(|k| Step::Key(k, NONE))
+        );
+        assert_eq!(
+            parse("{NUMPAD10}"),
+            Err(SequenceError::Unknown("NUMPAD10".into()))
+        );
+        assert_eq!(
+            parse("{NUMPAD}"),
+            Err(SequenceError::Unknown("NUMPAD".into()))
+        );
+    }
+
+    #[test]
+    fn virtual_key_codes() {
+        let vk = |code, extended| Key::Vk { code, extended };
+        assert_eq!(
+            parse("{VKEY 13}^{VKEY 0x41}{VKEY-EX 45}{vkey-nx 0x2E}").unwrap(),
+            vec![
+                Step::Key(vk(13, None), NONE),
+                Step::Key(vk(0x41, None), CTRL),
+                Step::Key(vk(45, Some(true)), NONE),
+                Step::Key(vk(0x2e, Some(false)), NONE),
+            ]
+        );
+        assert_eq!(parse("{VKEY 0}"), Err(SequenceError::BadNumber));
+        assert_eq!(parse("{VKEY 255}"), Err(SequenceError::BadNumber));
+        assert_eq!(parse("{VKEY x}"), Err(SequenceError::BadNumber));
+    }
+
+    #[test]
+    fn values_worked_out_from_the_entry() {
+        assert_eq!(
+            parse("{TIMEOTP}{GROUP}{group_path}{UUID}{URL:HOST}{url:rmvscm}{URL:WITHOUTSCHEME}")
+                .unwrap(),
+            vec![
+                Step::Totp,
+                Step::Derived(Derived::Group),
+                Step::Derived(Derived::GroupPath),
+                Step::Derived(Derived::Uuid),
+                Step::Derived(Derived::Url(UrlPart::Host)),
+                Step::Derived(Derived::Url(UrlPart::WithoutScheme)),
+                Step::Derived(Derived::Url(UrlPart::WithoutScheme)),
+            ]
+        );
+        assert_eq!(
+            parse("{URL:NOPE}"),
+            Err(SequenceError::Unknown("URL:NOPE".into()))
+        );
+        assert_eq!(parse("+{GROUP}"), Err(SequenceError::DanglingModifier));
+    }
+
+    #[test]
+    fn dates() {
+        assert_eq!(
+            parse("{DT_SIMPLE}{dt_year}{DT_UTC_SECOND}").unwrap(),
+            vec![
+                Step::Date {
+                    part: DatePart::Simple,
+                    utc: false
+                },
+                Step::Date {
+                    part: DatePart::Year,
+                    utc: false
+                },
+                Step::Date {
+                    part: DatePart::Second,
+                    utc: true
+                },
+            ]
+        );
+        let t = DateTime {
+            year: 2026,
+            month: 1,
+            day: 9,
+            hour: 7,
+            minute: 5,
+            second: 3,
+        };
+        assert_eq!(DatePart::Simple.format(t), "20260109070503");
+        assert_eq!(DatePart::Year.format(t), "2026");
+        assert_eq!(DatePart::Month.format(t), "01");
+        assert_eq!(DatePart::Second.format(t), "03");
+        assert_eq!(
+            parse("{DT_WEEK}"),
+            Err(SequenceError::Unknown("DT_WEEK".into()))
+        );
+    }
+
+    #[test]
+    fn comments_beeps_and_virtual_mode() {
+        assert_eq!(
+            parse("a{C:log in}b{BEEP 800 200}{MODE=VIRTUAL}c").unwrap(),
+            vec![
+                text("ab"),
+                Step::Beep { hz: 800, ms: 200 },
+                Step::VirtualMode,
+                text("c"),
+            ]
+        );
+        assert_eq!(parse("{BEEP 10 200}"), Err(SequenceError::BadNumber));
+        assert_eq!(parse("{BEEP 800}"), Err(SequenceError::BadNumber));
+        assert_eq!(
+            parse("{MODE=UNICODE}"),
+            Err(SequenceError::Unknown("MODE=UNICODE".into()))
+        );
+    }
+
+    #[test]
+    fn url_parts_like_keepass() {
+        let url = "https://user:pw@keepass.info:81/path/example.php?q=e&s=t#top";
+        let part = |p: UrlPart| p.of(url);
+        assert_eq!(
+            part(UrlPart::WithoutScheme),
+            "user:pw@keepass.info:81/path/example.php?q=e&s=t#top"
+        );
+        assert_eq!(part(UrlPart::Scheme), "https");
+        assert_eq!(part(UrlPart::Host), "keepass.info");
+        assert_eq!(part(UrlPart::Port), "81");
+        assert_eq!(part(UrlPart::Path), "/path/example.php");
+        assert_eq!(part(UrlPart::Query), "?q=e&s=t");
+        assert_eq!(part(UrlPart::Fragment), "#top");
+        assert_eq!(part(UrlPart::UserInfo), "user:pw");
+        assert_eq!(part(UrlPart::UserName), "user");
+        assert_eq!(part(UrlPart::Password), "pw");
+        // the scheme's usual port
+        assert_eq!(UrlPart::Port.of("https://example.com/x"), "443");
+        assert_eq!(UrlPart::Port.of("http://example.com"), "80");
+        assert_eq!(UrlPart::Port.of("example.com"), "");
+        // no scheme
+        assert_eq!(
+            UrlPart::Host.of("dash.cloudflare.com/login"),
+            "dash.cloudflare.com"
+        );
+        assert_eq!(UrlPart::Scheme.of("dash.cloudflare.com/login"), "");
+        assert_eq!(UrlPart::Path.of("dash.cloudflare.com/login"), "/login");
+        // IPv6
+        assert_eq!(UrlPart::Host.of("http://[::1]:8080/a"), "[::1]");
+        assert_eq!(UrlPart::Port.of("http://[::1]:8080/a"), "8080");
+        assert_eq!(UrlPart::Host.of(""), "");
     }
 }

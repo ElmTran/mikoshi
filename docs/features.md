@@ -152,6 +152,13 @@ v1 对应 KeePassXC 的功能模块 1–10。每个功能前的标记：**[必�
 - [必须] 匹配到多个条目时弹出选择框；一个都没匹配到时，打开快速搜索框让用户自己选
 - [必须] 默认序列 `{USERNAME}{TAB}{PASSWORD}{ENTER}`；条目和窗口关联可以自定义序列
 - [必须] 支持的占位符：`{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{TOTP}` `{S:字段名}` `{TAB}` `{ENTER}` `{SPACE}` `{BACKSPACE}` `{DELAY n}` `{DELAY=n}`，以及转义字符 `{+}` `{%}` `{^}` `{~}` `{(}` `{)}` `{{}` `{}}`
+- [必须] 和 KeePass 2、KeePassXC 兼容的其他占位符（2026-11-20 加入，F3）：
+  - `{CLEARFIELD}`：清空当前输入框，按 KeePassXC 的做法依次按 `Ctrl+Home`、`Ctrl+Shift+End`、`Backspace`
+  - 值：`{TIMEOTP}`（同 `{TOTP}`）、`{GROUP}`、`{GROUP_PATH}`（不含根分组，用 `.` 连接）、`{UUID}`、`{URL:RMVSCM}`/`{URL:WITHOUTSCHEME}` `{URL:SCM}` `{URL:HOST}` `{URL:PORT}` `{URL:PATH}` `{URL:QUERY}` `{URL:FRAGMENT}` `{URL:USERINFO}` `{URL:USERNAME}` `{URL:PASSWORD}`、`{DT_SIMPLE}` `{DT_YEAR}` `{DT_MONTH}` `{DT_DAY}` `{DT_HOUR}` `{DT_MINUTE}` `{DT_SECOND}` 及 `{DT_UTC_…}`
+  - 按键：`{DELETE}`/`{DEL}` `{INSERT}`/`{INS}` `{HOME}` `{END}` `{PGUP}` `{PGDN}` 方向键 `{ESC}` `{F1}`–`{F24}` `{WIN}`/`{LWIN}` `{RWIN}` `{APPS}` `{CAPSLOCK}` `{NUMLOCK}` `{SCROLLLOCK}` `{PRTSC}` `{BREAK}` `{HELP}` `{ADD}` `{SUBTRACT}` `{MULTIPLY}` `{DIVIDE}` `{NUMPAD0}`–`{NUMPAD9}` `{VKEY n}` `{VKEY-EX n}` `{VKEY-NX n}`，按键后可跟次数（`{TAB 2}`）
+  - 转义名称：`{PLUS}` `{PERCENT}` `{CARET}` `{TILDE}` `{LEFTPAREN}` `{RIGHTPAREN}` `{LEFTBRACE}` `{RIGHTBRACE}`，以及 `{[}` `{]}`
+  - 其他：`{BEEP 频率 毫秒}`、KeePassXC 的 `{MODE=VIRTUAL}`（之后的字符按当前键盘布局的按键输入，给远程桌面、游戏这类不认 Unicode 输入的程序）、`{C:注释}`（什么都不输入）
+  - 不支持：需要弹窗或交互的（`{PICKCHARS}` `{PICKFIELD}` `{NEWPASSWORD}`）、会运行程序或改库的（`{CMD:…}` `{HMACOTP}` `{APPACTIVATE …}`）、文本变换（`{T-REPLACE-RX:…}` `{T-CONV:…}`）、字段引用 `{REF:…}`、环境变量和库路径（`%变量%` `{DB_…}` `{ENV_…}`）。遇到这些仍然整段不输入，并在日志里记下是哪个占位符
 - [可选] 修饰键前缀 `+`（Shift）、`^`（Ctrl）、`%`（Alt）
 - 实现要点：
   - 用 `SendInput`。普通字符用 `KEYEVENTF_UNICODE`，Tab、Enter 等功能键用虚拟键码
