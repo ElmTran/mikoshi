@@ -124,6 +124,20 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // The quick search box closes when it loses the focus, like a
+            // menu. Done here, not in its page: the page sleeps while the box
+            // is hidden, so focus events queued then would reach it on the
+            // next show and close the box straight away. Only a visible box
+            // counts; hiding it also takes the focus away.
+            if window.label() == "quick" {
+                if let WindowEvent::Focused(false) = event
+                    && window.is_visible().unwrap_or(false)
+                    && let Err(e) = windows::hide_quick(window.app_handle(), false)
+                {
+                    log::error!("cannot hide quick search: {e}");
+                }
+                return;
+            }
             if window.label() != "main" {
                 return;
             }

@@ -31,6 +31,4 @@ export const appWindow = {
   /** the window's current theme; null outside Tauri */
   theme: async (): Promise<Theme | null> => (isTauri ? win().theme() : null),
   onResized: async (fn: () => void): Promise<() => void> => (isTauri ? win().onResized(fn) : () => {}),
-  onFocusChanged: async (fn: (focused: boolean) => void): Promise<() => void> =>
-    isTauri ? win().onFocusChanged((e) => fn(e.payload)) : () => {},
 };

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { api, isTauri, listen } from '../api';
 import { AppError, Field, type EntrySummary, type QuickShown, type VaultStatus } from '../api/types';
-import { appWindow } from '../api/window';
 import { EntryIcon, Keys } from '../components/bits';
 import { Icon } from '../components/Icon';
 import { UnlockForm } from '../components/Unlock';
@@ -44,6 +43,8 @@ export function QuickApp() {
       // an edit changes what the search finds
       listen<VaultStatus>('vault-edited', () => setOpened((n) => n + 1)),
       listen<QuickShown>('quick-shown', (shown) => {
+        // a hide still pending from the last time must not close this one
+        window.clearTimeout(hideTimer.current);
         // ask again each time: a failed first call must not leave the box empty
         void loadStatus();
         setQuery('');
@@ -54,13 +55,13 @@ export function QuickApp() {
         // remounts the panel, which replays its entrance and refocuses the input
         setOpened((n) => n + 1);
       }),
-      // like a menu: clicking anywhere else closes it
-      appWindow.onFocusChanged((focused) => {
-        if (!focused) hide(false);
-      }),
+      // Clicking anywhere else closes the box, like a menu. The Rust side
+      // does that (lib.rs, on_window_event): this page sleeps while hidden,
+      // and a focus event queued then would arrive on the next show and
+      // close the box at once.
     ];
     return () => offs.forEach((p) => void p.then((f) => f()));
-  }, [hide]);
+  }, []);
 
   const q = query.trim();
   const terms = useMemo(() => searchTerms(q), [q]);
