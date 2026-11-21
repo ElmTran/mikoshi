@@ -1,119 +1,171 @@
-# Mikoshi
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="Mikoshi">
+</p>
 
-Windows 上的密码管理器。直接读写 KeePass 的 `.kdbx` 密码库，和 KeePassXC、KeePass 2、手机上的 KeePassDX 用同一个文件；界面简洁，以快捷键为中心。
+<h1 align="center">Mikoshi</h1>
 
-- 打开、浏览、搜索 KeePass 密码库，复制用户名、密码、验证码（TOTP）
-- 在任何程序里按 `Ctrl+Alt+K` 呼出快速搜索框，按 `Ctrl+Alt+V` 自动输入账号密码
-- 新建和编辑条目、历史版本、回收站、分组、附件、密码生成器、新建密码库
-- 保存时只改动过的地方，其余内容原样写回：别的客户端写进去的数据不会丢
-- 不联网，没有账号，没有云同步；文件放在哪里、怎么同步由你决定
+<p align="center">
+  <b>A keyboard-first password manager for Windows that works directly with KeePass files.</b><br>
+  Your <code>.kdbx</code> database, shared with KeePassXC, KeePass 2 and KeePassDX, in a quiet interface you can drive without the mouse.
+</p>
 
-## 安装
+<p align="center">
+  <a href="https://github.com/ElmTran/mikoshi/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/ElmTran/mikoshi?include_prereleases&label=release"></a>
+  <img alt="Platform: Windows 10 / 11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-informational">
+  <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
 
-1. 下载 `Mikoshi_x.y.z_x64-setup.exe`，运行它
-2. 默认装在 `%LOCALAPPDATA%\Programs\Mikoshi`，只给当前用户安装，不需要管理员权限；安装向导里可以换目录
-3. 安装包没有代码签名，第一次运行时 Windows SmartScreen 会提示"无法识别的应用"：点"更多信息"→"仍要运行"，以后不会再提示
-4. Mikoshi 的界面用的是 Windows 自带的 WebView2。Windows 11 和更新过的 Windows 10 都已经有了；没有的话，安装包会从微软下载安装（只在安装时联网，Mikoshi 本身从不联网）
+<p align="center">
+  English · <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-卸载：Windows 设置 → 应用 → Mikoshi → 卸载。设置文件在 `%APPDATA%\com.elmtran.mikoshi\`，卸载后要彻底清掉可以手动删除；它不含任何密码。
+![Mikoshi main window](docs/screenshots/main-light-en.webp)
 
-## 开始使用
+## Why Mikoshi
 
-- **打开已有的库**：选择 `.kdbx` 文件，输入主密码；用了密钥文件的，点"使用密钥文件"选上它。Mikoshi 会记住最近打开的库和每个库的密钥文件位置（只记路径）
-- **新建密码库**：解锁界面上的"新建密码库…"。设主密码，可以再加一个密钥文件（选现有的，或新生成一个）。新库是 KDBX 4.1、AES-256、Argon2id，加密强度按这台电脑的速度调整到解锁大约 1 秒
-- 支持 KDBX 3.1、4.0、4.1，密码、密钥文件或两者都用；不支持 KeePass 1 的 `.kdb`
+- **Your file, your rules.** Mikoshi reads and writes standard KeePass `.kdbx` files. There is no account, no cloud and no network access. Keep the file wherever you like and sync it however you like.
+- **Plays well with other KeePass apps.** Use KeePassXC on another PC and KeePassDX on your phone, all with the same database. When Mikoshi saves, it rewrites only what you changed. Everything else, including data it does not understand, is written back exactly as it was.
+- **Everything from the keyboard.** Press `Ctrl+Alt+K` in any program to search your vault. Press `Ctrl+Alt+V` on a login page and Mikoshi types your username and password for you.
+- **Secrets stay in Rust.** Passwords, protected fields and one-time code secrets never reach the user interface unless you ask to see them. Copying, auto-type and code generation all happen in the Rust backend.
+- **Calm by design.** A paper-and-ink look in light and dark themes, with no clutter.
 
-## 日常使用
+## Screenshots
 
-- **搜索**：`Ctrl+F` 或直接在顶部搜索框输入。多个词都要匹配；`title:`、`user:`、`url:`、`tag:` 把一个词限定在某个字段；引号让词里可以有空格（`title:"招商 银行"`）。拼不全也能找到（`gthb` 能找到 GitHub）
-- **复制**：选中条目后，`Ctrl+B` 复制用户名、`Ctrl+C` 复制密码、`Ctrl+T` 复制验证码、`Ctrl+U` 复制网址。密码和验证码不进 Windows 的剪贴板历史（`Win+V`）和云剪贴板，默认 10 秒后自动清掉；如果在这之前你又复制了别的东西，不会被误清
-- **快速搜索框**：在任何程序里按 `Ctrl+Alt+K`。输入几个字，`Enter` 复制密码，`Ctrl+Enter` 自动输入，`Ctrl+B` 复制用户名，`Ctrl+T` 复制验证码，`Esc` 关闭
-- **自动输入**：在登录页按 `Ctrl+Alt+V`。Mikoshi 按窗口标题和浏览器地址栏里的网址找到对应的条目，输入"用户名 Tab 密码 Enter"（可以按 KeePass 的写法为每个条目定制序列）。找到多个时让你选，一个都没有时打开快速搜索框。目标窗口以管理员身份运行时，Windows 不允许输入，Mikoshi 会提示
-- **自动锁定**：一段时间没有操作（默认 5 分钟）、锁屏（`Win+L`）、电脑睡眠时自动锁定；`Ctrl+L` 或 `Ctrl+Alt+L` 手动锁定。锁定后内存里解密过的内容全部清掉
-- **托盘**：关掉主窗口只是隐藏，Mikoshi 留在托盘里，全局热键照常可用；退出在托盘菜单里
-
-## 编辑和保存
-
-- `Ctrl+N` 新建条目，`Ctrl+E` 或 `Enter` 编辑。标准字段、标签、过期时间、自定义字段（每个都能单独设为受保护）、验证码（粘贴 `otpauth://` 地址，或手填密钥）、图标
-- 每次修改前，旧版本自动存进历史，条数上限沿用库里的设置；在历史记录里可以查看和恢复任意一个版本
-- `Delete` 把条目或分组移到回收站，在回收站里再删就是永久删除（会先确认）；可以清空回收站
-- 分组可以新建、改名、移动、删除；条目和分组都能拖到别的分组里
-- 附件可以添加、导出、删除
-- 密码生成器：`Ctrl+G`，或编辑时密码栏旁边的钥匙按钮。可以选长度和字符种类、排除容易看错的字符，也可以生成几个英文单词连起来的口令短语；显示强度估算
-- **保存**：默认每次修改都立即写入文件。先写临时文件、核对无误后再替换原文件，上一版留作 `名字.kdbx.bak`（可以在设置里关掉）。也可以在设置里关掉"修改后立即保存"，改成按 `Ctrl+S` 时才保存，标题栏会显示有没有未保存的修改
-- **文件被别处改过**（比如同步盘刚同步过来、或 KeePassXC 同时开着）：保存前会提示，让你选重新加载（放弃自己的修改）、覆盖，或取消。锁定时如果遇到这种情况，你的修改另存成 `名字.mikoshi-conflict-时间.kdbx`，两边都不会丢
-
-## 快捷键
-
-全部可以在设置里修改。
-
-**全局**（在任何程序里都有效）
-
-| 操作 | 默认 |
+| Quick search, from any program | Dark theme |
 |---|---|
-| 快速搜索框 | `Ctrl+Alt+K` |
-| 自动输入 | `Ctrl+Alt+V` |
-| 锁定 | `Ctrl+Alt+L` |
+| ![Quick search box](docs/screenshots/quick-en.webp) | ![Dark theme with search](docs/screenshots/main-dark-en.webp) |
 
-**主窗口**
+| Every shortcut can be changed |
+|---|
+| ![Shortcut settings](docs/screenshots/settings-en.webp) |
 
-| 操作 | 默认 |
+## Features
+
+- Open KDBX 3.1, 4.0 and 4.1 databases with a master password, a key file, or both
+- Browse groups and entries, with fuzzy search and field filters (`title:`, `user:`, `url:`, `tag:`)
+- Copy usernames, passwords, URLs and one-time codes (TOTP). Copied secrets stay out of clipboard history and are cleared automatically
+- Quick search box and auto-type, available from anywhere through global hotkeys
+- Create and edit entries, with custom and protected fields, tags, expiry dates, icons and attachments
+- Entry history with restore, a recycle bin, and group management with drag and drop
+- Password generator for random passwords and passphrases (EFF word list), with a strength estimate
+- Saves every change immediately with a safe write and a backup, and warns you when the file was changed somewhere else
+- Locks automatically when idle, when Windows locks, or when the computer sleeps. Lives in the system tray
+- Light and dark themes; English and Simplified Chinese
+
+## Download and install
+
+Mikoshi is in **beta** (0.9.x pre-releases). It is already in daily use, but please keep a backup of your database.
+
+1. Download `Mikoshi_x.y.z_x64-setup.exe` from [Releases](https://github.com/ElmTran/mikoshi/releases) and run it.
+2. It installs for the current user only, into `%LOCALAPPDATA%\Programs\Mikoshi`, and needs no administrator rights. You can choose a different folder in the installer.
+3. The installer is not code-signed, so Windows SmartScreen will warn about an "unrecognized app" the first time. Click **More info** → **Run anyway**. You only need to do this once.
+4. Mikoshi uses Microsoft WebView2, which comes with Windows 11 and up-to-date Windows 10. If it is missing, the installer downloads it from Microsoft. That is the only network access, and it happens during setup only. Mikoshi itself never goes online.
+
+To uninstall, go to Windows Settings → Apps → Mikoshi → Uninstall. Settings are kept in `%APPDATA%\com.elmtran.mikoshi\`; delete that folder if you want to remove them too. It contains no passwords.
+
+## Getting started
+
+- **Open an existing database.** Pick a `.kdbx` file and enter the master password. If the database uses a key file, choose **Add a key file**. Mikoshi remembers recent databases and the key file used for each one (paths only).
+- **Create a new database.** Choose **New database…** on the unlock screen. Set a master password, and optionally add a key file (an existing one or a newly generated one). New databases use KDBX 4.1, AES-256 and Argon2id, tuned so that unlocking takes about one second on your computer.
+- KeePass 1 `.kdb` files are not supported.
+
+## Everyday use
+
+- **Search.** Press `Ctrl+F` or start typing in the search box at the top. Every word must match. Use `title:`, `user:`, `url:` and `tag:` to limit a word to one field, and quotes to include spaces (`title:"my bank"`). Partial typing works too: `gthb` finds GitHub.
+- **Copy.** With an entry selected, `Ctrl+B` copies the username, `Ctrl+C` the password, `Ctrl+T` the one-time code and `Ctrl+U` the URL. Passwords and codes are kept out of clipboard history (`Win+V`) and cloud clipboard, and are cleared after 10 seconds by default. If you copied something else in the meantime, it is left alone.
+- **Quick search box.** Press `Ctrl+Alt+K` anywhere. Type a few letters, then press `Enter` to auto-type, `Ctrl+Enter` to type just the password, `Ctrl+C` to copy the password, `Ctrl+B` to copy the username, `Ctrl+T` to copy the one-time code, or `Esc` to close. Right-click an entry for more.
+- **Auto-type.** On a login page, press `Ctrl+Alt+V`. Mikoshi finds the matching entry from the window title and the URL in the browser's address bar, then types "username, Tab, password, Enter". Each entry can have its own sequence and window rules, using the KeePass placeholder syntax. If several entries match, you pick one; if none do, the quick search box opens. If the target window runs as administrator, Windows blocks typed input, and Mikoshi tells you so.
+- **Auto-lock.** Mikoshi locks after a period of inactivity (5 minutes by default), when you lock Windows (`Win+L`), and when the computer goes to sleep. Lock it by hand with `Ctrl+L` or `Ctrl+Alt+L`. Locking discards everything that was decrypted in memory.
+- **Tray.** Closing the main window only hides it. Mikoshi keeps running in the tray, so the global hotkeys keep working. To quit, use the tray menu.
+
+## Editing and saving
+
+- `Ctrl+N` creates an entry; `Ctrl+E` or `Enter` edits one. You can edit the standard fields, tags, expiry date, custom fields (each can be protected), the one-time code (paste an `otpauth://` link or enter the secret), the icon, and the auto-type settings.
+- Before every change, the old version goes into the entry's history, up to the limit set in the database. You can view and restore any earlier version.
+- `Delete` moves an entry or group to the recycle bin. Deleting from the recycle bin removes it for good, after a confirmation. The recycle bin can be emptied.
+- Groups can be created, renamed, moved and deleted. Drag entries and groups to move them.
+- Attachments can be added, saved to disk and removed.
+- **Password generator.** Press `Ctrl+G`, or click the key button next to the password field while editing. Choose the length and character sets, leave out look-alike characters, or generate a passphrase from English words. A strength estimate is shown.
+- **Saving.** By default every change is written to the file right away. Mikoshi writes to a temporary file, checks it, and only then replaces the database, keeping the previous version as `name.kdbx.bak` (this can be turned off). If you prefer, turn off **Save every change at once** in Settings and save with `Ctrl+S`; the title bar then shows when there are unsaved changes.
+- **File changed elsewhere** (for example, just synced, or open in KeePassXC at the same time). Mikoshi asks before saving: reload (dropping your changes), overwrite, or cancel. If this happens while locking, your changes are saved as `name.mikoshi-conflict-time.kdbx`, so nothing is lost on either side.
+
+## Keyboard shortcuts
+
+All of them can be changed in Settings.
+
+**Global** (work in every program)
+
+| Action | Default |
 |---|---|
-| 搜索 | `Ctrl+F` |
-| 复制用户名 | `Ctrl+B` |
-| 复制密码 | `Ctrl+C` |
-| 复制网址 | `Ctrl+U` |
-| 打开网址 | `Ctrl+Shift+U` |
-| 复制验证码 | `Ctrl+T` |
-| 自动输入选中的条目 | `Ctrl+Shift+V` |
-| 显示/隐藏密码 | `Ctrl+H` |
-| 新建条目 | `Ctrl+N` |
-| 编辑条目 | `Ctrl+E` 或 `Enter` |
-| 删除 | `Delete` |
-| 保存 | `Ctrl+S` |
-| 锁定 | `Ctrl+L` |
-| 密码生成器 | `Ctrl+G` |
-| 设置 | `Ctrl+,` |
+| Quick search box | `Ctrl+Alt+K` |
+| Auto-type | `Ctrl+Alt+V` |
+| Lock | `Ctrl+Alt+L` |
 
-方向键、`Home`、`End`、`PageUp`、`PageDown` 在分组和条目之间移动，`Tab` 在三栏之间切换。
+**Main window**
 
-## 从 KeePassXC 或 KeePass 2 迁移
+| Action | Default |
+|---|---|
+| Search | `Ctrl+F` |
+| Copy username | `Ctrl+B` |
+| Copy password | `Ctrl+C` |
+| Copy URL | `Ctrl+U` |
+| Open URL | `Ctrl+Shift+U` |
+| Copy one-time code | `Ctrl+T` |
+| Auto-type the selected entry | `Ctrl+Shift+V` |
+| Show or hide password | `Ctrl+H` |
+| New entry | `Ctrl+N` |
+| Edit entry | `Ctrl+E` or `Enter` |
+| Delete | `Delete` |
+| Save | `Ctrl+S` |
+| Lock | `Ctrl+L` |
+| Password generator | `Ctrl+G` |
+| Settings | `Ctrl+,` |
 
-- 不用导入导出：直接打开原来的 `.kdbx` 就行，几个程序可以轮流用同一个文件
-- **Mikoshi 只写 KDBX 4.1**。KDBX 3.1 或 4.0 的库第一次保存时会提示，同意后文件变成 4.1：KeePass 2.48 以上、KeePassXC 2.8 都能打开，更老的版本打不开
-- 加密算法、密钥派生参数、压缩方式沿用原来的设置；Mikoshi 不提供修改这些设置和修改主密码的功能，需要时用 KeePassXC
-- 保存时只改动过的地方，其他客户端写进去、Mikoshi 不认识的数据原样保留
-- 验证码：认 KeePassXC 的 `otp` 字段、KeePass 2 自带的 `TimeOtp-*` 字段和老的 `TOTP Seed` 写法；在 Mikoshi 里修改验证码会统一写成 `otp` 字段
-- 永久删除会记进库的"已删除对象"列表，同步工具和其他客户端据此知道东西是被删掉的
-- Mikoshi 没有的：浏览器扩展、SSH Agent、密码泄露检查、导入导出、KeeShare、数据库设置、Windows Hello 解锁、YubiKey、多个库同时打开，以及 macOS 和 Linux 版本
+The arrow keys, `Home`, `End`, `PageUp` and `PageDown` move between groups and entries; `Tab` moves between the three panes.
 
-## 安全上的做法
+## Coming from KeePassXC or KeePass 2
 
-- 密码、受保护字段和验证码密钥只在程序的 Rust 部分里，界面只拿到标题、用户名这类信息；复制、自动输入、计算验证码都在 Rust 里完成。只有你点"显示"或打开编辑时，才把那一个条目的值交给界面，用完就丢
-- 内存里的秘密在释放时擦除；锁定就是把解密过的库整个丢掉
-- 日志和错误信息里不会出现任何密码和条目内容
-- 不联网，不加载任何远程资源；正式版关闭了开发者工具，页面有严格的内容安全策略
-- 只运行一个实例，再次启动会切到已经开着的窗口
+- Nothing to import or export. Open your existing `.kdbx` file; the apps can take turns with the same file.
+- **Mikoshi writes KDBX 4.1 only.** The first time you save a KDBX 3.1 or 4.0 database, Mikoshi asks first; after that the file is 4.1. KeePass 2.48 and later and KeePassXC 2.8 can open it; older versions cannot.
+- The cipher, key derivation settings and compression are kept as they are. Mikoshi cannot change them or the master key yet (see the [Roadmap](#roadmap)); use KeePassXC for that for now.
+- Saving rewrites only what you changed. Data written by other clients that Mikoshi does not understand is kept as it is.
+- One-time codes: Mikoshi reads KeePassXC's `otp` field, KeePass 2's built-in `TimeOtp-*` fields and the older `TOTP Seed` format. If you change a code in Mikoshi, it is stored as an `otp` field.
+- Permanent deletions are recorded in the database's list of deleted objects, so sync tools and other clients know the item was deleted on purpose.
 
-## 第三方软件
+## Security
 
-Mikoshi 用到的开源组件和它们的许可证见 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)（安装目录里也有一份）。口令短语的词表来自 [EFF](https://www.eff.org/dice)，使用 CC BY 3.0 US 许可。
+- Passwords, protected fields and one-time code secrets stay in the Rust part of the program. The interface only receives things like titles and usernames, and copying, auto-type and code generation are done in Rust. A secret is sent to the interface only when you click **Show** or open the editor, and only for that one entry; it is discarded afterwards.
+- Secrets in memory are wiped when they are released. Locking drops the whole decrypted database.
+- Passwords and entry contents never appear in logs or error messages.
+- No network access and no remote resources. Release builds have developer tools turned off and a strict Content Security Policy.
+- Only one instance runs at a time; starting Mikoshi again brings the running window to the front.
 
-## 开发
+## Roadmap
 
-Tauri 2 + React + TypeScript；后端是 Rust，用自己写的无损读写层 `crates/kdbx` 读写库文件。
+Planned for after 1.0:
 
-- 文档：功能规格 [docs/features.md](docs/features.md)、里程碑 [docs/milestones.md](docs/milestones.md)、工程结构和约定 [docs/architecture.md](docs/architecture.md)、M0 结论 [docs/m0-report.md](docs/m0-report.md)
-- 需要 Rust 1.90 以上（MSVC 工具链，要装 Visual Studio 生成工具的"使用 C++ 的桌面开发"）、Node.js、pnpm
+- **Database settings:** change the master password and key file, and the cipher, key derivation and compression settings.
+- **Several databases open at once:** for example, a personal and a work database side by side.
+
+Not available today: browser extension, SSH agent, password breach checks, import and export, KeeShare, Windows Hello unlock, YubiKey, and macOS or Linux versions.
+
+Ideas and bug reports are welcome in [Issues](https://github.com/ElmTran/mikoshi/issues).
+
+## Building from source
+
+Mikoshi is built with Tauri 2, React and TypeScript. The backend is Rust, and database files are read and written by its own lossless KDBX layer in `crates/kdbx`.
+
+You need Rust 1.90 or later with the MSVC toolchain (Visual Studio Build Tools with "Desktop development with C++"), Node.js and pnpm.
 
 ```bash
 pnpm install
-pnpm tauri dev
-pnpm check
+pnpm tauri dev     # run the app
+pnpm check         # types, ESLint, clippy, formatting and tests
+pnpm tauri build   # build the NSIS installer
 ```
 
-依次是：装依赖；启动程序；跑全部检查（类型、ESLint、clippy、格式、测试）。
+Developer documentation is in Chinese: the feature spec in [docs/features.md](docs/features.md), project structure and conventions in [docs/architecture.md](docs/architecture.md), and KDBX compatibility testing in [tests/fixtures/README.md](tests/fixtures/README.md).
 
-- 不打扰正在用电脑的人的测试方法（窗口放到另一个虚拟桌面）：见 architecture.md 的"不打扰桌面的测试"
-- KDBX 兼容性检查：`cargo run -p kdbx-compat --release`，说明见 [tests/fixtures/README.md](tests/fixtures/README.md)
-- 依赖变了之后重新生成第三方许可说明：`python -I tools/third-party-notices.py`
+## License
+
+Mikoshi is released under the MIT License. The open-source components it uses and their licenses are listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which is also included in the install folder. The passphrase word list comes from the [EFF](https://www.eff.org/dice) and is licensed under CC BY 3.0 US.
