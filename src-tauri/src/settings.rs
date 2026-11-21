@@ -148,6 +148,12 @@ pub struct Settings {
     pub lock_hotkey: String,
     /// global hotkey that auto-types into the window in front; "" = off
     pub autotype_hotkey: String,
+    /// global hotkey that opens the quick search box as a form for a new
+    /// entry, with the page in front filled in (quick save); "" = off
+    pub quick_save_hotkey: String,
+    /// the group quick save put the last entry in (its uuid). Managed by the
+    /// Rust side, like `recent`. A database without that group uses its root.
+    pub quick_save_group: Option<String>,
     /// milliseconds between auto-typed keys
     pub autotype_key_delay_ms: u32,
     /// keep the previous file as `NAME.bak` before each save
@@ -179,6 +185,8 @@ impl Default for Settings {
             quick_search_hotkey: "Ctrl+Alt+K".into(),
             lock_hotkey: "Ctrl+Alt+L".into(),
             autotype_hotkey: "Ctrl+Alt+V".into(),
+            quick_save_hotkey: "Ctrl+Alt+N".into(),
+            quick_save_group: None,
             autotype_key_delay_ms: 20,
             backup_on_save: true,
             save_on_edit: true,
@@ -224,11 +232,13 @@ impl Settings {
             .and_then(|r| r.key_file.clone())
     }
 
-    /// Takes the user-editable part of `incoming`; the recent list stays as
-    /// it is here. Turning key file memory off forgets the stored paths.
+    /// Takes the user-editable part of `incoming`; the recent list and the
+    /// quick save group stay as they are here. Turning key file memory off
+    /// forgets the stored paths.
     pub fn merge_from_ui(&self, incoming: Settings) -> Settings {
         let mut next = Settings {
             recent: self.recent.clone(),
+            quick_save_group: self.quick_save_group.clone(),
             ..incoming
         };
         if !next.remember_key_files {
@@ -350,6 +360,8 @@ mod tests {
         assert_eq!(s.quick_search_hotkey, "Ctrl+Alt+K");
         assert_eq!(s.lock_hotkey, "Ctrl+Alt+L");
         assert_eq!(s.autotype_hotkey, "Ctrl+Alt+V");
+        assert_eq!(s.quick_save_hotkey, "Ctrl+Alt+N");
+        assert_eq!(s.quick_save_group, None);
         assert_eq!(s.autotype_key_delay_ms, 20);
         assert!(!s.lock_on_minimize);
         let _ = fs::remove_dir_all(&dir);
@@ -383,6 +395,7 @@ mod tests {
     fn ui_cannot_overwrite_recent_files_and_can_forget_key_files() {
         let mut s = Settings::default();
         s.note_opened(r"D:\a.kdbx", Some(r"D:\a.keyx"));
+        s.quick_save_group = Some("g1".into());
         let stale = Settings {
             theme: ThemePref::Dark,
             ..Settings::default()
@@ -390,6 +403,7 @@ mod tests {
         let merged = s.merge_from_ui(stale);
         assert_eq!(merged.theme, ThemePref::Dark);
         assert_eq!(merged.recent, s.recent);
+        assert_eq!(merged.quick_save_group.as_deref(), Some("g1"));
 
         let off = Settings {
             remember_key_files: false,

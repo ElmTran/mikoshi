@@ -24,6 +24,9 @@ import {
   type GroupView,
   type HistoryItem,
   type HotkeyStatus,
+  type QuickSaveEntry,
+  type QuickSaved,
+  type QuickSavePrefill,
   type SaveOptions,
   type Settings,
   type Strength,
@@ -102,8 +105,13 @@ export const api = {
     call<string>('reveal_history_field', { entryId, index, key }),
   restoreHistory: (entryId: string, index: number) =>
     call<VaultStatus>('restore_history', { entryId, index }),
-  /** writes the database to its file; a conflict or upgrade shows up as an error code */
-  saveDatabase: (options?: SaveOptions) => call<VaultStatus>('save_database', { options }),
+  /**
+   * writes the database to its file; a conflict or upgrade shows up as an error code.
+   * `onlyUnsaved`: the save after each edit, which writes nothing when another save
+   * (quick save) already took the edits
+   */
+  saveDatabase: (options?: SaveOptions, onlyUnsaved = false) =>
+    call<VaultStatus>('save_database', { options, onlyUnsaved }),
   /** reads the file again, dropping unsaved edits */
   reloadDatabase: () => call<VaultStatus>('reload_database'),
   /** whether deleting these is for good (they are in the bin, or it is off) */
@@ -155,6 +163,11 @@ export const api = {
     call<void>('autotype_entry', { entryId, passwordOnly }),
   /** from the main window: it minimizes and types into the window behind */
   autotypeFromMain: (entryId: string) => call<void>('autotype_from_main', { entryId }),
+  /** quick save: what the form starts with (the page or window behind the box) */
+  quickSavePrefill: () => call<QuickSavePrefill>('quick_save_prefill'),
+  /** quick save: adds the entry and writes the file; `typePassword`: then types it into the window behind */
+  quickSave: (entry: QuickSaveEntry, typePassword: boolean) =>
+    call<QuickSaved>('quick_save', { entry, typePassword }),
   hotkeyStatus: () => call<HotkeyStatus>('hotkey_status'),
   /** while recording a new hotkey; saving one also ends the pause */
   pauseHotkeys: (paused: boolean) => call<HotkeyStatus>('pause_hotkeys', { paused }),

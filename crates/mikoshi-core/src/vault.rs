@@ -665,6 +665,28 @@ impl Vault {
         found
     }
 
+    /// Entries already saved for the site of `page_url` (same rule as
+    /// auto-type's URL match), outside the recycle bin, in tree order. For
+    /// quick save to say the site has entries already.
+    pub fn site_entries(&self, page_url: &str) -> Vec<EntrySummary> {
+        let mut found = Vec::new();
+        for (i, node) in self.groups.iter().enumerate() {
+            if node.in_bin {
+                continue;
+            }
+            let Some(g) = self.group_ref(node) else {
+                continue;
+            };
+            for e in g.entries() {
+                let f = Fields::of(&e);
+                if autotype::url_matches(f.get(fields::URL).unwrap_or_default(), page_url) {
+                    found.push(self.summary(&e, &f, i));
+                }
+            }
+        }
+        found
+    }
+
     /// The sequence to type for one entry chosen by the user (quick search,
     /// main window): the first window association that fits `window_title`,
     /// otherwise the entry's or its groups' default. `None` when there is no
@@ -1037,6 +1059,22 @@ mod tests {
                 .iter()
                 .any(|(e, _)| e.title == "Full Fields")
         );
+    }
+
+    #[test]
+    fn site_entries_match_by_host_and_skip_the_bin() {
+        let v = open_ok();
+        let titles = |url: &str| -> Vec<String> {
+            v.site_entries(url).into_iter().map(|e| e.title).collect()
+        };
+        // Full Fields has https://example.com/login?a=1&b=2
+        assert!(titles("https://accounts.example.com/signin").contains(&"Full Fields".to_string()));
+        assert!(titles("example.com").contains(&"Full Fields".to_string()));
+        assert!(titles("https://example.org").is_empty());
+        assert!(titles("").is_empty());
+        for url in ["https://example.com", "example.com"] {
+            assert!(!titles(url).contains(&"Deleted Entry".to_string()));
+        }
     }
 
     #[test]

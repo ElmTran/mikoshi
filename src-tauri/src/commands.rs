@@ -144,7 +144,8 @@ pub fn set_settings(
         };
         let err = problem(keys.quick_search != old.quick_search, status.quick_search)
             .or_else(|| problem(keys.lock != old.lock, status.lock))
-            .or_else(|| problem(keys.autotype != old.autotype, status.autotype));
+            .or_else(|| problem(keys.autotype != old.autotype, status.autotype))
+            .or_else(|| problem(keys.quick_save != old.quick_save, status.quick_save));
         if let Some(err) = err {
             hotkeys::apply(&app, old);
             return Err(err);
@@ -540,16 +541,24 @@ pub fn restore_history(
 /// The KDF runs on a background thread, on a copy of the database: the vault
 /// is locked only to start and to finish, so the windows stay responsive and
 /// other commands keep working. Edits made meanwhile stay unsaved.
+///
+/// `only_unsaved`: the main window's save after each edit. Nothing is written
+/// when there is nothing unsaved by the time it is this save's turn: another
+/// save (quick save writes the file itself) may have done it meanwhile, and
+/// writing again would replace the `.bak` of the version before with a copy
+/// of the new one.
 #[tauri::command]
 pub async fn save_database(
     app: AppHandle,
     state: State<'_, AppState>,
     options: Option<SaveOptions>,
+    only_unsaved: Option<bool>,
 ) -> AppResult<VaultStatus> {
     let mut opts = options.unwrap_or_default();
     opts.backup = settings(&state)?.current.backup_on_save;
+    let only_unsaved = only_unsaved.unwrap_or(false);
     let app2 = app.clone();
-    tauri::async_runtime::spawn_blocking(move || save_now(&app2, opts))
+    tauri::async_runtime::spawn_blocking(move || save_now(&app2, opts, only_unsaved))
         .await
         .map_err(|_| AppError::Internal)??;
     announce(&app, &state)
@@ -564,13 +573,19 @@ fn log_save_error(e: &SaveError) {
     }
 }
 
-/// One whole save, on the calling thread (see `save_database`).
-pub fn save_now(app: &AppHandle, opts: SaveOptions) -> AppResult<()> {
+/// One whole save, on the calling thread (see `save_database`). With
+/// `only_unsaved`, nothing happens when there are no unsaved edits once the
+/// save before it has finished.
+pub fn save_now(app: &AppHandle, opts: SaveOptions, only_unsaved: bool) -> AppResult<()> {
     let state = tauri::Manager::state::<AppState>(app);
     let _one_at_a_time = state.save_lock.lock().map_err(|_| AppError::Internal)?;
     let job = {
         let s = state.vault.lock().map_err(|_| AppError::Internal)?;
         let vault = s.open.as_ref().ok_or(AppError::Locked)?;
+        if only_unsaved && !vault.is_dirty() {
+            log::debug!("nothing unsaved; the file is left alone");
+            return Ok(());
+        }
         vault.prepare_save(opts).inspect_err(log_save_error)?
     };
     let path = job.path().to_path_buf();
@@ -1083,6 +1098,277 @@ pub async fn create_database(
     announce(&app, &state)
 }
 
+// ---------------------------------------------------------------- quick save
+
+/// A group quick save can put the new entry in (not the recycle bin).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupChoice {
+    pub id: String,
+    pub name: String,
+    pub depth: u32,
+}
+
+/// What the quick save form starts with, from the window it was opened over.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickSavePrefill {
+    pub title: String,
+    /// the page's site (`https://host`), only for a browser
+    pub url: String,
+    /// what was already typed in the window's user name field (never its
+    /// password: see browser.rs)
+    pub username: String,
+    pub groups: Vec<GroupChoice>,
+    /// the group used last time, if this database has it; else the root
+    pub group_id: String,
+    /// entries already saved for the page's site
+    pub existing: Vec<EntrySummary>,
+    /// there is a window to type the password into after saving
+    pub can_type: bool,
+}
+
+/// The site of a browser address, as an entry URL: `https://host[:port]`.
+/// Path, query and fragment are dropped: they can hold session tokens, and
+/// entries match by host anyway. `None` for anything but a web page
+/// (`chrome://`, a search being typed).
+///
+/// Chromium shows addresses without their scheme, `http://` as well as
+/// `https://`. Then a guess: `http` for `localhost` and IP addresses (a dev
+/// server, a router), `https` for everything else.
+fn site_of(address: &str) -> Option<url::Url> {
+    let address = address.trim();
+    if address.is_empty() || address.contains(char::is_whitespace) {
+        return None;
+    }
+    let has_scheme = address.contains("://");
+    let full = if has_scheme {
+        address.to_string()
+    } else {
+        format!("https://{address}")
+    };
+    let mut url = url::Url::parse(&full).ok()?;
+    let host = url.host()?.to_owned();
+    // "localhost" yes, "foo" (a search word) no
+    let local = match &host {
+        url::Host::Domain(d) => d == "localhost",
+        url::Host::Ipv4(_) | url::Host::Ipv6(_) => true,
+    };
+    let looks_like_host = local || matches!(&host, url::Host::Domain(d) if d.contains('.'));
+    if !matches!(url.scheme(), "http" | "https") || !looks_like_host {
+        return None;
+    }
+    if !has_scheme && local {
+        url.set_scheme("http").ok()?;
+    }
+    url::Url::parse(&url.origin().ascii_serialization()).ok()
+}
+
+/// Title and URL for the window in front: a browser page gives its site
+/// (title = host without `www.`); another program its window title.
+fn prefill_from(window_title: &str, address: Option<&str>) -> (String, String) {
+    if let Some(site) = address.and_then(site_of) {
+        // a Chinese domain as people read it (and as the address bar shows
+        // it), not its "xn--" form
+        let host = mikoshi_core::autotype::readable_host(site.host_str().unwrap_or_default());
+        let title = host.strip_prefix("www.").unwrap_or(&host).to_string();
+        let port = site.port().map(|p| format!(":{p}")).unwrap_or_default();
+        let url = format!("{}://{host}{port}", site.scheme());
+        return (title, url);
+    }
+    (window_title.trim().to_string(), String::new())
+}
+
+/// Groups outside the recycle bin, in tree order.
+fn group_choices(v: &Vault) -> Vec<GroupChoice> {
+    let mut bin: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for g in v.groups() {
+        let in_bin = g.kind == mikoshi_core::model::GroupKind::RecycleBin
+            || g.parent_id.as_ref().is_some_and(|p| bin.contains(p));
+        if in_bin {
+            bin.push(g.id);
+            continue;
+        }
+        out.push(GroupChoice {
+            id: g.id,
+            name: g.name,
+            depth: g.depth,
+        });
+    }
+    out
+}
+
+/// For the quick save form, once the database is unlocked. Reading a
+/// browser's address can take a moment, so not on the main thread.
+#[tauri::command]
+pub async fn quick_save_prefill(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<QuickSavePrefill> {
+    let target = windows::previous(&app);
+    // read when the hotkey was pressed, while the field had the focus
+    let captured = windows::take_captured_username();
+    let (title, address, username) = match target {
+        Some(t) => tauri::async_runtime::spawn_blocking(move || {
+            let username = captured.or_else(|| crate::browser::form_username(t));
+            (
+                typing::window_title(t),
+                crate::browser::page_url(t),
+                username,
+            )
+        })
+        .await
+        .map_err(|_| AppError::Internal)?,
+        None => (String::new(), None, None),
+    };
+    let (title, url) = if target.is_some() {
+        prefill_from(&title, address.as_deref())
+    } else {
+        (String::new(), String::new())
+    };
+    let last = settings(&state)?.current.quick_save_group.clone();
+    read(&state, |v| {
+        let groups = group_choices(v);
+        let root = groups.first()?.id.clone();
+        let group_id = last
+            .filter(|l| groups.iter().any(|g| &g.id == l))
+            .unwrap_or(root);
+        let existing = if url.is_empty() {
+            Vec::new()
+        } else {
+            v.site_entries(&url)
+        };
+        Some(QuickSavePrefill {
+            title: title.clone(),
+            url: url.clone(),
+            username: username.clone().unwrap_or_default(),
+            groups,
+            group_id,
+            existing,
+            can_type: target.is_some() && !windows::dev_quiet(),
+        })
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickSaveEntry {
+    pub group_id: String,
+    pub title: String,
+    pub username: String,
+    pub password: Secret,
+    pub url: String,
+}
+
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum FileState {
+    /// written to the file
+    Written,
+    /// saving after each edit is off: it waits for Save, like any edit
+    Pending,
+    /// could not be written now (changed elsewhere, format question, disk):
+    /// the main window asks when it is opened, as after any failed save
+    Failed,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickSaved {
+    pub file: FileState,
+    /// typing the password was asked for and could not start: why
+    pub type_error: Option<AppError>,
+}
+
+/// Quick save: adds the entry, remembers the group, and writes the file when
+/// saving after each edit is on. With `type_password` the box closes and the
+/// password is typed into the window it was opened over, as `Ctrl+Enter`
+/// does for a found entry; typing does not wait for the file.
+#[tauri::command]
+pub async fn quick_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entry: QuickSaveEntry,
+    type_password: bool,
+) -> AppResult<QuickSaved> {
+    let edit = EntryEdit {
+        title: entry.title.trim().to_string(),
+        username: entry.username.trim().to_string(),
+        password: entry.password,
+        url: entry.url.trim().to_string(),
+        notes: String::new(),
+        tags: Vec::new(),
+        expires: None,
+        fields: Vec::new(),
+        totp: Default::default(),
+        icon: None,
+        autotype: None,
+    };
+    let id = edit_vault(&app, &state, |v| v.create_entry(&entry.group_id, &edit))?;
+    log::info!("quick save: entry added");
+
+    let remembered = {
+        let mut store = settings(&state)?;
+        if store.current.quick_save_group.as_deref() == Some(entry.group_id.as_str()) {
+            None
+        } else {
+            store
+                .update(|s| s.quick_save_group = Some(entry.group_id.clone()))
+                .ok()
+        }
+    };
+    if let Some(s) = remembered {
+        let _ = app.emit("settings-changed", &s);
+    }
+
+    let mut type_error = None;
+    if type_password {
+        let plan = (|| {
+            let target = windows::previous(&app).ok_or(AppError::AutotypeNoWindow)?;
+            let s = session(&state)?;
+            let vault = s.open.as_ref().ok_or(AppError::Locked)?;
+            typing::plan(vault, &id, "{PASSWORD}", target).map_err(autotype::app_error)
+        })();
+        match plan {
+            Ok(plan) => {
+                windows::hide_quick(&app, true).map_err(|e| {
+                    log::error!("cannot hide quick search: {e}");
+                    AppError::Window
+                })?;
+                autotype::start(&app, plan);
+            }
+            Err(e) => type_error = Some(e),
+        }
+    }
+
+    let (save_on_edit, backup) = {
+        let s = settings(&state)?;
+        (s.current.save_on_edit, s.current.backup_on_save)
+    };
+    let file = if save_on_edit {
+        let app2 = app.clone();
+        let opts = SaveOptions {
+            backup,
+            ..Default::default()
+        };
+        let saved = tauri::async_runtime::spawn_blocking(move || save_now(&app2, opts, false))
+            .await
+            .map_err(|_| AppError::Internal)?;
+        match saved {
+            Ok(()) => FileState::Written,
+            Err(e) => {
+                log::info!("quick save: the file was not written ({e:?})");
+                FileState::Failed
+            }
+        }
+    } else {
+        FileState::Pending
+    };
+    announce(&app, &state)?;
+    Ok(QuickSaved { file, type_error })
+}
+
 // ---------------------------------------------------------------- generator
 
 #[derive(Serialize)]
@@ -1196,7 +1482,84 @@ pub fn open_app_file(app: AppHandle, which: AppFile) -> AppResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_url;
+    use super::{prefill_from, safe_url};
+
+    #[test]
+    fn quick_save_fills_in_the_site_or_the_window_title() {
+        let p = |title: &str, address: Option<&str>| prefill_from(title, address);
+        let site = |t: &str, u: &str| (t.to_string(), u.to_string());
+        // Chromium shows no scheme; path, query and fragment go
+        assert_eq!(
+            p(
+                "Sign in - Google Chrome",
+                Some("github.com/login?return_to=x#y")
+            ),
+            site("github.com", "https://github.com")
+        );
+        assert_eq!(
+            p("x", Some("https://www.example.com/a/b")),
+            site("example.com", "https://www.example.com")
+        );
+        assert_eq!(
+            p("x", Some("http://192.168.1.1:8080/admin")),
+            site("192.168.1.1", "http://192.168.1.1:8080")
+        );
+        // no scheme shown: localhost and IP addresses are guessed as http
+        assert_eq!(
+            p("x", Some("localhost:3000/login")),
+            site("localhost", "http://localhost:3000")
+        );
+        assert_eq!(
+            p("x", Some("192.168.1.1/admin")),
+            site("192.168.1.1", "http://192.168.1.1")
+        );
+        assert_eq!(
+            p("x", Some("[::1]:8080")),
+            site("[::1]", "http://[::1]:8080")
+        );
+        // a Chinese domain stays readable, from either form
+        assert_eq!(
+            p("x", Some("网站演示.中国/login")),
+            site("网站演示.中国", "https://网站演示.中国")
+        );
+        let parsed = url::Url::parse("https://网站演示.中国").unwrap();
+        let ascii = parsed.host_str().unwrap();
+        assert!(ascii.starts_with("xn--"));
+        assert_eq!(
+            p("x", Some(&format!("https://www.{ascii}/a"))),
+            site("网站演示.中国", "https://www.网站演示.中国")
+        );
+        // ...unless the address says otherwise
+        assert_eq!(
+            p("x", Some("https://localhost:8443/")),
+            site("localhost", "https://localhost:8443")
+        );
+        assert_eq!(
+            p("x", Some("http://example.com/")),
+            site("example.com", "http://example.com")
+        );
+        assert_eq!(
+            p("x", Some("https://user:pw@accounts.example.com/")),
+            site("accounts.example.com", "https://accounts.example.com")
+        );
+        // not a web page: the window title, no URL
+        for address in [
+            None,
+            Some("chrome://settings"),
+            Some("about:blank"),
+            Some("how to make tea"),
+            Some("tea"),
+            Some(""),
+            Some("file:///C:/x.html"),
+        ] {
+            assert_eq!(
+                p("  New Tab - Google Chrome ", address),
+                site("New Tab - Google Chrome", ""),
+                "{address:?}"
+            );
+        }
+        assert_eq!(p("Steam", None), site("Steam", ""));
+    }
 
     #[test]
     fn opens_only_web_urls() {

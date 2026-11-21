@@ -1,10 +1,15 @@
-//! The address of the page in front, for auto-type (features.md §3.10).
+//! What can be read from the window in front, through UI Automation, the
+//! interface screen readers use.
 //!
-//! When the window to type into belongs to a browser, its address bar is
-//! read through UI Automation, the interface screen readers use: Chromium
-//! browsers (Edge, Chrome, Brave, Vivaldi) expose it as `OmniboxViewViews`,
-//! Firefox as `urlbar-input`. The address is matched against entry URLs and
-//! never logged.
+//! The address of the page, for auto-type (features.md §3.10) and quick
+//! save: when the window belongs to a browser, its address bar is read.
+//! Chromium browsers (Edge, Chrome, Brave, Vivaldi) expose it as
+//! `OmniboxViewViews`, Firefox as `urlbar-input`. The address is matched
+//! against entry URLs and never logged.
+//!
+//! The user name already typed into a login form, for quick save (§3.12).
+//! Only ordinary text fields are read: a password field gives out nothing
+//! but dots (browsers and Windows make sure of that), and is never asked.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -14,12 +19,14 @@ use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    GetCurrentProcessId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
-use windows::Win32::System::Variant::{VARIANT, VT_BSTR, VariantClear};
+use windows::Win32::System::Variant::{VARIANT, VT_BSTR, VT_I4, VariantClear};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationValuePattern, TreeScope_Descendants,
-    UIA_AutomationIdPropertyId, UIA_ClassNamePropertyId, UIA_ValuePatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
+    TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_ClassNamePropertyId,
+    UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 use windows::core::{BSTR, PWSTR};
@@ -108,6 +115,159 @@ impl Drop for BstrVariant {
             let _ = VariantClear(&mut self.0);
         }
     }
+}
+
+/// A `VT_I4` VARIANT, for a control type condition. Owns nothing.
+fn i4_variant(value: i32) -> VARIANT {
+    let mut v = VARIANT::default();
+    // SAFETY: a zeroed VARIANT set to VT_I4 with its integer
+    unsafe {
+        let inner = &mut *v.Anonymous.Anonymous;
+        inner.vt = VT_I4;
+        inner.Anonymous.lVal = value;
+    }
+    v
+}
+
+/// Runs `f` with UI Automation on a thread of its own (COM in its own
+/// apartment), giving up after `timeout`: a hung program must not hold
+/// anything up.
+fn with_uia<T: Send + 'static>(
+    timeout: Duration,
+    f: impl FnOnce(&IUIAutomation) -> Option<T> + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("ui-automation".into())
+        .spawn(move || {
+            // SAFETY: COM is initialised for this thread and uninitialised at
+            // the end; every interface is released before that
+            unsafe {
+                if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
+                    let _ = tx.send(None);
+                    return;
+                }
+                let out = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+                    .ok()
+                    .and_then(|uia: IUIAutomation| f(&uia));
+                let _ = tx.send(out);
+                CoUninitialize();
+            }
+        })
+        .ok()?;
+    rx.recv_timeout(timeout).ok().flatten()
+}
+
+/// How a text field looks to quick save.
+enum Field {
+    /// the address bar, a password field, or not a text field at all
+    Other,
+    Password,
+    /// an ordinary text field and what is in it (possibly nothing)
+    Text(String),
+}
+
+/// What `e` is. Only a text field's value is read, never a password's.
+fn field_of(e: &IUIAutomationElement) -> Field {
+    // SAFETY: plain property queries on a live element
+    unsafe {
+        if e.CurrentControlType().ok() != Some(UIA_EditControlTypeId) {
+            return Field::Other;
+        }
+        if e.CurrentIsPassword().is_ok_and(|p| p.as_bool()) {
+            return Field::Password;
+        }
+        let class = e
+            .CurrentClassName()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let id = e
+            .CurrentAutomationId()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if class == "OmniboxViewViews" || id == "urlbar-input" {
+            return Field::Other;
+        }
+        let value = e
+            .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            .and_then(|v| v.CurrentValue())
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        Field::Text(value)
+    }
+}
+
+/// Longest text taken for a user name: anything longer is not one.
+const MAX_USERNAME: usize = 128;
+
+/// A plausible user name: one short line.
+fn username_from(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty() && text.chars().count() <= MAX_USERNAME && !text.contains(['\n', '\r']))
+        .then(|| text.to_string())
+}
+
+/// The text in the field that has the keyboard focus, when it is an
+/// ordinary one-line text field in another program (not Mikoshi, not an
+/// address bar, not a password field). Call it while that program is in
+/// front, before the quick search box takes the focus.
+pub fn focused_username() -> Option<String> {
+    with_uia(TIMEOUT, |uia| {
+        // SAFETY: plain queries on a live element
+        let e = unsafe { uia.GetFocusedElement().ok()? };
+        let pid = unsafe { e.CurrentProcessId().ok()? };
+        if pid as u32 == unsafe { GetCurrentProcessId() } {
+            return None;
+        }
+        match field_of(&e) {
+            Field::Text(t) => username_from(&t),
+            _ => None,
+        }
+    })
+}
+
+/// The user name on a login form in `target`: the text field just before
+/// the first password field, if something is typed in it. A browser builds
+/// the page's accessibility tree only when first asked, so an empty first
+/// look is tried once more.
+pub fn form_username(target: isize) -> Option<String> {
+    with_uia(TIMEOUT, move |uia| {
+        for attempt in 0..2 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            // SAFETY: plain queries; the condition's VARIANT is plain data
+            let found = unsafe {
+                let window = uia.ElementFromHandle(HWND(target as *mut _)).ok()?;
+                let edits = uia
+                    .CreatePropertyCondition(
+                        UIA_ControlTypePropertyId,
+                        &i4_variant(UIA_EditControlTypeId.0),
+                    )
+                    .ok()?;
+                let all = window.FindAll(TreeScope_Descendants, &edits).ok()?;
+                let mut last: Option<String> = None;
+                let mut found = None;
+                for i in 0..all.Length().unwrap_or(0) {
+                    let Ok(e) = all.GetElement(i) else { continue };
+                    match field_of(&e) {
+                        Field::Password => {
+                            found = Some(last.take());
+                            break;
+                        }
+                        Field::Text(t) => last = Some(t),
+                        Field::Other => {}
+                    }
+                }
+                found
+            };
+            // a password field was found: whatever came before it decides
+            if let Some(before) = found {
+                return before.and_then(|t| username_from(&t));
+            }
+        }
+        None
+    })
 }
 
 fn read_address_bar(target: isize) -> Option<String> {

@@ -373,6 +373,8 @@ node tools/cdp.mjs main shot target/shots/main.png eef1f6
 
 第一条带调试端口启动程序，第二条给主窗口截图（最后的颜色可选，用来代替透明窗口后面截不到的桌面，快速搜索框截图时有用）。其他用法见文件开头的说明。
 
+**快速搜索框的模式（自动输入选条目、快速保存）在 `pnpm tauri dev` 里测不了**：框隐藏时页面会睡着（`windows::set_awake`），Vite 的热更新连接跟着断掉，框再出现时 Vite 重新加载整个页面，`quick-shown` 带来的模式丢了，框总是显示成搜索框。正式程序没有 Vite，不受影响。测这些用下面的 `pnpm tauri build --debug --no-bundle`，再带调试端口直接运行 `target/debug/mikoshi.exe`（2026-11-21 测快速保存时遇到）。
+
 ### 检查正式构建
 
 正式构建拒绝调试端口，`cdp.mjs` 连不上，改用两个只读的小脚本：`tools/window-state.ps1` 列出窗口是否可见、是否最小化、是否在前台；`tools/window-shot.ps1` 给窗口截图（窗口被别的窗口挡住也能截，但不能是最小化状态）。

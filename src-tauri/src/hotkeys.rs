@@ -1,5 +1,6 @@
 //! Global hotkeys (features.md §3.6, §5): one shows the quick search box from
-//! any program, one locks the database, one auto-types (§3.10).
+//! any program, one locks the database, one auto-types (§3.10), one opens
+//! the box as a form for a new entry (quick save, §3.12).
 //!
 //! Settings store a hotkey as text: modifiers in the order Ctrl, Alt, Shift,
 //! Win, then one key named like `KeyboardEvent.code` without its prefix
@@ -23,6 +24,7 @@ pub enum Action {
     QuickSearch,
     Lock,
     Autotype,
+    QuickSave,
 }
 
 /// The hotkey texts from the settings.
@@ -31,6 +33,7 @@ pub struct Wanted {
     pub quick_search: String,
     pub lock: String,
     pub autotype: String,
+    pub quick_save: String,
 }
 
 impl From<&Settings> for Wanted {
@@ -39,6 +42,7 @@ impl From<&Settings> for Wanted {
             quick_search: s.quick_search_hotkey.clone(),
             lock: s.lock_hotkey.clone(),
             autotype: s.autotype_hotkey.clone(),
+            quick_save: s.quick_save_hotkey.clone(),
         }
     }
 }
@@ -63,11 +67,12 @@ pub struct Status {
     pub quick_search: State,
     pub lock: State,
     pub autotype: State,
+    pub quick_save: State,
 }
 
 impl Status {
     pub fn all_usable(&self) -> bool {
-        [self.quick_search, self.lock, self.autotype]
+        [self.quick_search, self.lock, self.autotype, self.quick_save]
             .iter()
             .all(|s| matches!(s, State::Off | State::Active))
     }
@@ -126,7 +131,8 @@ pub fn on_shortcut(app: &AppHandle, shortcut: &Shortcut, state: ShortcutState) {
             .map(|(a, _)| *a)
     });
     match action {
-        Some(Action::QuickSearch) => windows::toggle_quick(app),
+        Some(Action::QuickSearch) => windows::toggle_quick(app, windows::QuickMode::Search),
+        Some(Action::QuickSave) => windows::toggle_quick(app, windows::QuickMode::Save),
         Some(Action::Lock) => session::lock_app(app, "hotkey"),
         Some(Action::Autotype) => crate::autotype::on_hotkey(app),
         None => {}
@@ -221,6 +227,7 @@ fn register(app: &AppHandle, h: &mut Inner) -> Status {
         quick_search: one(Action::QuickSearch, &wanted.quick_search),
         lock: one(Action::Lock, &wanted.lock),
         autotype: one(Action::Autotype, &wanted.autotype),
+        quick_save: one(Action::QuickSave, &wanted.quick_save),
     };
     h.status = status;
     status

@@ -56,6 +56,8 @@ const COMMANDS: &[&str] = &[
     "autotype_candidates",
     "autotype_entry",
     "autotype_from_main",
+    "quick_save_prefill",
+    "quick_save",
     "hotkey_status",
     "pause_hotkeys",
     "get_autostart",

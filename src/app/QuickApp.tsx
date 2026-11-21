@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { api, isTauri, listen } from '../api';
 import { appWindow } from '../api/window';
-import { AppError, Field, type EntrySummary, type QuickShown, type VaultStatus } from '../api/types';
+import {
+  AppError,
+  Field,
+  type EntrySummary,
+  type QuickMode,
+  type QuickShown,
+  type VaultStatus,
+} from '../api/types';
 import { EntryIcon, Keys } from '../components/bits';
 import { Icon } from '../components/Icon';
 import { UnlockForm } from '../components/Unlock';
@@ -9,6 +16,7 @@ import { Highlight } from '../components/Highlight';
 import { host, searchTerms } from '../text';
 import { usePrefs } from './contexts';
 import { CustomIconsProvider } from './CustomIcons';
+import { QuickSave } from './QuickSave';
 
 type Action = 'autotype' | 'typePassword' | 'password' | 'username' | 'totp';
 type Copy = 'password' | 'username' | 'totp';
@@ -22,6 +30,12 @@ export function QuickApp() {
   const [index, setIndex] = useState(0);
   const [flash, setFlash] = useState<{ id: string; text: string; ok: boolean } | null>(null);
   const [opened, setOpened] = useState(0);
+  // counts edits, so the results are searched again
+  const [edits, setEdits] = useState(0);
+  // what the box was opened for (in a browser: ?mode=save, for UI work)
+  const [mode, setMode] = useState<QuickMode>(() =>
+    !isTauri && new URLSearchParams(location.search).get('mode') === 'save' ? 'save' : 'search',
+  );
   // auto-type hotkey: list the entries that fit the window behind
   const [pick, setPick] = useState(false);
   // the right-click menu: which entry, and where (relative to the panel)
@@ -42,7 +56,8 @@ export function QuickApp() {
     const offs = [
       listen<VaultStatus>('vault-changed', setStatus),
       // an edit changes what the search finds
-      listen<VaultStatus>('vault-edited', () => setOpened((n) => n + 1)),
+      // (not a remount: that would also reset a quick save form)
+      listen<VaultStatus>('vault-edited', () => setEdits((n) => n + 1)),
       listen<QuickShown>('quick-shown', (shown) => {
         // a hide still pending from the last time must not close this one
         window.clearTimeout(hideTimer.current);
@@ -52,7 +67,8 @@ export function QuickApp() {
         setIndex(0);
         setFlash(null);
         setMenu(null);
-        setPick(Boolean(shown?.pick));
+        setMode(shown?.mode ?? 'search');
+        setPick(shown?.mode === 'pick');
         // remounts the panel, which replays its entrance and refocuses the input
         setOpened((n) => n + 1);
       }),
@@ -100,7 +116,7 @@ export function QuickApp() {
   // picking only until the user starts typing a search
   const picking = pick && !q;
   useEffect(() => {
-    if (!unlocked) return;
+    if (!unlocked || mode === 'save') return;
     let live = true;
     if (picking) {
       api.autotypeCandidates().then(
@@ -130,7 +146,7 @@ export function QuickApp() {
     return () => {
       live = false;
     };
-  }, [q, unlocked, picking]);
+  }, [q, unlocked, picking, mode, edits]);
 
   const showError = (id: string, err: unknown) =>
     setFlash({ id, text: t(`error.${err instanceof AppError ? err.code : 'internal'}`), ok: false });
@@ -175,6 +191,8 @@ export function QuickApp() {
       e.preventDefault();
       fn();
     };
+    // the quick save form has keys of its own
+    if (mode === 'save' && unlocked) return;
     if (k === 'Escape') return handled(() => (menu ? setMenu(null) : hide()));
     if (!unlocked) return;
     if (menu) return;
@@ -210,7 +228,7 @@ export function QuickApp() {
           key={opened}
           ref={panel}
           role="dialog"
-          aria-label={t('toolbar.quickSearch')}
+          aria-label={t(mode === 'save' ? 'quickSave.heading' : 'toolbar.quickSearch')}
           onPointerDown={(e) => {
             if (menu && !(e.target as Element).closest('.qr-menu')) setMenu(null);
           }}
@@ -220,7 +238,19 @@ export function QuickApp() {
               <p className="qs-empty">{t('quick.noDatabase')}</p>
             </div>
           ) : status.locked ? (
-            <UnlockForm status={status} compact />
+            <UnlockForm
+              status={status}
+              compact
+              placeholder={mode === 'save' ? t('quickSave.locked') : undefined}
+            />
+          ) : mode === 'save' ? (
+            <QuickSave
+              status={status}
+              onClose={() => hide()}
+              onDone={(ms) => {
+                hideTimer.current = window.setTimeout(() => hide(), ms);
+              }}
+            />
           ) : (
             <>
               <label className="qs-input">

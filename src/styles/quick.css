@@ -185,6 +185,135 @@ html.browser[data-theme].window-quick {
   padding: 22px 24px 24px;
 }
 
+/* ---- quick save: the box as a small form for a new entry. The fields use
+   the editor's underlined inputs (main.css); the window grows with the
+   generator and the group list (glass), or the form scrolls (Windows 10). */
+.qsv {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.qsv-head {
+  height: 56px;
+}
+.qsv-heading {
+  flex: 1;
+  font-size: var(--fs-body-large);
+  color: var(--ink);
+}
+.qsv-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 24px 16px;
+}
+.qsv .ef-two {
+  gap: 20px;
+}
+.qsv-gen {
+  border: 1px solid var(--qs-line);
+  border-radius: var(--r-layer);
+}
+.qsv-group {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--ink);
+  text-align: left;
+  border-bottom: 1px solid var(--line-2);
+}
+.qsv-group:focus-visible {
+  outline: none;
+  border-bottom-color: var(--ink);
+  box-shadow: 0 0.5px 0 var(--ink);
+}
+.qsv-group > .icon:first-child {
+  color: var(--ink-3);
+}
+.qsv-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qsv-group[aria-expanded='true'] > .icon:last-child {
+  transform: rotate(180deg);
+}
+.qsv-groups {
+  max-height: 196px;
+  overflow: auto;
+  margin-top: 6px;
+  padding: 4px;
+  border: 1px solid var(--qs-line);
+  border-radius: var(--r-layer);
+}
+.qsv-group-opt {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  text-align: left;
+}
+.qsv-group-opt > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qsv-group-opt:hover,
+.qsv-group-opt:focus-visible {
+  outline: none;
+  background: var(--hover);
+}
+.qsv-group-opt.on {
+  color: var(--ink);
+  font-weight: 600;
+}
+.qsv-existing {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.qsv-existing > .icon {
+  flex: none;
+  margin-top: 2px;
+}
+.qsv-foot {
+  align-items: center;
+  margin: 0 24px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--qs-line);
+}
+.qsv-note {
+  flex: 1;
+  min-width: 0;
+}
+.qsv-save {
+  margin-left: auto;
+}
+/* Windows 10: a fixed window, the form scrolls inside it */
+html:not(.glass) .qs:has(.qsv) {
+  max-height: 100%;
+}
+/* glass: the window follows the content; keep it on a small screen */
+html.glass .qsv-fields {
+  max-height: 560px;
+}
+
 /* Locked: the search row becomes the password row and the footer keeps its
    key hints, so the box looks the same, only asking for the password. */
 .unlock-form.compact {

@@ -62,6 +62,8 @@ export function MainApp() {
         const bad = [
           [h.quickSearch, settings.quickSearchHotkey],
           [h.lock, settings.lockHotkey],
+          [h.autotype, settings.autotypeHotkey],
+          [h.quickSave, settings.quickSaveHotkey],
         ].filter(([state]) => state === 'taken' || state === 'invalid');
         if (bad.length)
           toast({

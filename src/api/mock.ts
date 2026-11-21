@@ -330,7 +330,12 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
       case 'get_settings':
         return loadSettings();
       case 'set_settings': {
-        const s = { ...(args.settings as Settings), recent: loadSettings().recent };
+        const kept = loadSettings();
+        const s = {
+          ...(args.settings as Settings),
+          recent: kept.recent,
+          quickSaveGroup: kept.quickSaveGroup,
+        };
         if (!s.rememberKeyFiles) s.recent = s.recent.map((r) => ({ ...r, keyFile: null }));
         return saveSettings(s);
       }
@@ -529,7 +534,53 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
           quickSearch: state(s.quickSearchHotkey),
           lock: state(s.lockHotkey),
           autotype: state(s.autotypeHotkey),
+          quickSave: state(s.quickSaveHotkey),
         };
+      }
+      case 'quick_save_prefill': {
+        open();
+        // a browser page stands in for the window behind the box
+        const url = 'https://github.com';
+        const groups = data.groups
+          .filter((g) => g.kind !== 'recycleBin')
+          .map((g) => ({ id: g.id, name: g.name, depth: depth(g.id) }));
+        const last = loadSettings().quickSaveGroup;
+        return {
+          title: 'github.com',
+          url,
+          username: '',
+          groups,
+          groupId: groups.some((g) => g.id === last) ? last : groups[0]?.id,
+          existing: data.entries.filter((e) => !inBin(e) && /(^|[/.])github\.com/i.test(e.url)).map(summary),
+          canType: false,
+        };
+      }
+      case 'quick_save': {
+        open();
+        const entry = args.entry as {
+          groupId: string;
+          title: string;
+          username: string;
+          password: string;
+          url: string;
+        };
+        data.entries.push({
+          id: `new-${Date.now()}`,
+          group: entry.groupId,
+          title: entry.title.trim(),
+          username: entry.username.trim(),
+          password: entry.password,
+          url: entry.url.trim(),
+          created: now(),
+          modified: now(),
+        });
+        const s = loadSettings();
+        if (s.quickSaveGroup !== entry.groupId) saveSettings({ ...s, quickSaveGroup: entry.groupId });
+        emit('vault-edited', status());
+        const file = s.saveOnEdit ? 'written' : 'pending';
+        dirty = !s.saveOnEdit;
+        announce();
+        return { file, typeError: args.typePassword ? { code: 'autotypeNoWindow' } : null };
       }
       case 'autotype_candidates':
         return [];

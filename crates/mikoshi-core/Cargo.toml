@@ -17,6 +17,9 @@ hmac = "0.13"
 sha1 = "0.11"
 sha2 = "0.11"
 percent-encoding = "2"
+# Internationalised domain names: "中文.com" and "xn--fiq228c.com" are one
+# host. The version url already uses.
+idna = "1"
 # Password generator: the OS random source, and strength estimates (Dropbox's
 # zxcvbn, run here so its dictionaries never go into the frontend)
 getrandom = "0.4"

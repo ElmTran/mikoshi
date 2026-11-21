@@ -152,6 +152,7 @@ export const zhCN = {
   'settings.quickSearchHotkey': '快速搜索热键',
   'settings.lockHotkey': '锁定热键',
   'settings.autotypeHotkey': '自动输入热键',
+  'settings.quickSaveHotkey': '快速保存热键',
   'settings.keyDelay': '自动输入按键间隔',
   'settings.milliseconds': '{n} 毫秒',
   'settings.hotkeyRecording': '按下新的组合键…',
@@ -399,6 +400,16 @@ export const zhCN = {
   'quick.noDatabase': '还没有打开密码库。先在主窗口里选择一个。',
   'quick.noTotp': '这个条目没有验证码',
   'quick.hasTotp': '有验证码',
+  'quickSave.heading': '快速保存',
+  'quickSave.locked': '已锁定，输入主密码解锁后快速保存',
+  'quickSave.group': '分组',
+  'quickSave.save': '保存',
+  'quickSave.saveAndType': '保存并输入密码',
+  'quickSave.saved': '已保存',
+  'quickSave.pending': '已添加，还没写入文件：在主窗口保存',
+  'quickSave.notWritten': '已添加，但没能写入文件。打开主窗口处理',
+  'quickSave.typeFailed': '已保存，但没能输入密码：{reason}',
+  'quickSave.existing': '这个网站已经存过：{list}',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

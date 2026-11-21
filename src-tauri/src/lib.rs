@@ -219,6 +219,8 @@ pub fn run() {
             commands::autotype_candidates,
             commands::autotype_entry,
             commands::autotype_from_main,
+            commands::quick_save_prefill,
+            commands::quick_save,
             commands::hotkey_status,
             commands::pause_hotkeys,
             commands::get_autostart,

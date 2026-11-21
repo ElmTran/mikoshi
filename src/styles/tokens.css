@@ -59,7 +59,7 @@
   /* the quick search panel over other programs */
   --glass: rgba(250, 250, 248, 0.74);
   /* over Windows' own frosted glass (the quick search box on Windows 11) */
-  --glass-tint: rgba(250, 250, 248, 0.5);
+  --glass-tint: rgba(250, 250, 248, 0.85);
   /* lines in the quick search box: thin ink, so they read on any glass */
   --qs-line: rgba(20, 20, 19, 0.16);
   --hover: rgba(20, 20, 19, 0.04);
@@ -90,7 +90,7 @@
 
   --field: rgba(21, 21, 19, 0.72);
   --glass: rgba(18, 18, 16, 0.72);
-  --glass-tint: rgba(18, 18, 16, 0.45);
+  --glass-tint: rgba(18, 18, 16, 0.88);
   --qs-line: rgba(250, 250, 248, 0.16);
   --hover: rgba(242, 241, 236, 0.045);
   --press: rgba(242, 241, 236, 0.08);

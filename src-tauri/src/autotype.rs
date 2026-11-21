@@ -64,7 +64,12 @@ fn hotkey_for(app: &AppHandle, target: isize) {
 }
 
 fn show(app: &AppHandle, pick: bool) {
-    if let Err(e) = windows::show_quick_mode(app, pick) {
+    let mode = if pick {
+        windows::QuickMode::Pick
+    } else {
+        windows::QuickMode::Search
+    };
+    if let Err(e) = windows::show_quick_mode(app, mode) {
         log::error!("cannot show quick search: {e}");
     }
 }

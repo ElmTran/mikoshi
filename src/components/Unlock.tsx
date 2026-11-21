@@ -116,12 +116,14 @@ interface Props {
   status: VaultStatus;
   /** compact form for the quick search box: password only */
   compact?: boolean;
+  /** compact: what the password box says (the quick save form waits behind it) */
+  placeholder?: string | undefined;
   onUnlocked?: () => void;
   /** "New database…" (main window only) */
   onNew?: () => void;
 }
 
-export function UnlockForm({ status, compact, onUnlocked, onNew }: Props) {
+export function UnlockForm({ status, compact, placeholder, onUnlocked, onNew }: Props) {
   const { t, info } = usePrefs();
   const texts = useDialogTexts();
   const [password, setPassword] = useState('');
@@ -228,7 +230,7 @@ export function UnlockForm({ status, compact, onUnlocked, onNew }: Props) {
             }}
             onKeyDown={onKey}
             onKeyUp={onKey}
-            placeholder={t('quick.locked')}
+            placeholder={placeholder ?? t('quick.locked')}
             aria-label={t('unlock.password')}
             spellCheck={false}
             autoComplete="off"

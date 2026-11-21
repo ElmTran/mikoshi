@@ -119,8 +119,14 @@ function SettingsPage({ onClose }: { onClose: () => void }) {
   };
 
   const globals = useMemo(
-    () => [settings.quickSearchHotkey, settings.lockHotkey, settings.autotypeHotkey].filter(Boolean),
-    [settings.quickSearchHotkey, settings.lockHotkey, settings.autotypeHotkey],
+    () =>
+      [
+        settings.quickSearchHotkey,
+        settings.lockHotkey,
+        settings.autotypeHotkey,
+        settings.quickSaveHotkey,
+      ].filter(Boolean),
+    [settings.quickSearchHotkey, settings.lockHotkey, settings.autotypeHotkey, settings.quickSaveHotkey],
   );
   const conflicts = useMemo(
     () => shortcutConflicts(settings.shortcuts, globals),
@@ -264,6 +270,13 @@ function SettingsPage({ onClose }: { onClose: () => void }) {
             defaultValue={DEFAULT_SETTINGS.autotypeHotkey}
             state={hotkeys?.autotype}
             onSave={(text) => update({ autotypeHotkey: text })}
+          />
+          <HotkeyField
+            label={t('settings.quickSaveHotkey')}
+            value={settings.quickSaveHotkey}
+            defaultValue={DEFAULT_SETTINGS.quickSaveHotkey}
+            state={hotkeys?.quickSave}
+            onSave={(text) => update({ quickSaveHotkey: text })}
           />
           <HotkeyField
             label={t('settings.lockHotkey')}

@@ -77,7 +77,24 @@ fn web_host(url: &str) -> Option<String> {
     };
     let host = host.trim_end_matches('.').to_lowercase();
     // something like a host: no spaces, not empty
-    (!host.is_empty() && !host.contains(char::is_whitespace)).then_some(host)
+    if host.is_empty() || host.contains(char::is_whitespace) {
+        return None;
+    }
+    // A Chinese domain is "中文.com" in the address bar and "xn--fiq228c.com"
+    // on the wire, and an entry may hold either: compare the ASCII form.
+    if host.starts_with('[') || (host.is_ascii() && !host.contains("xn--")) {
+        return Some(host);
+    }
+    Some(idna::domain_to_ascii(&host).unwrap_or(host))
+}
+
+/// A host as people read it: "xn--fiq228c.com" becomes "中文.com". Anything
+/// that does not decode cleanly is returned as it is.
+pub fn readable_host(host: &str) -> String {
+    match idna::domain_to_unicode(host) {
+        (unicode, Ok(())) => unicode,
+        _ => host.to_string(),
+    }
 }
 
 /// `*` matches any run of characters; the rest must be equal.
@@ -821,6 +838,26 @@ mod tests {
         assert!(!url_matches("", "example.com"));
         assert!(!url_matches(entry, ""));
         assert!(!url_matches("https://", "example.com"));
+        // a Chinese domain, as the address bar shows it or in its ASCII form
+        let ascii = format!("xn--{}.com", "vcsx1ip8b8w4i");
+        let unicode = readable_host(&ascii);
+        assert_ne!(unicode, ascii);
+        assert!(!unicode.is_ascii());
+        assert!(url_matches(
+            &format!("https://{ascii}"),
+            &format!("{unicode}/login")
+        ));
+        assert!(url_matches(
+            &format!("https://{unicode}"),
+            &format!("https://{ascii}/")
+        ));
+        assert!(url_matches(
+            &format!("https://{unicode}"),
+            &format!("www.{unicode}")
+        ));
+        assert!(!url_matches(&format!("https://{unicode}"), "example.com"));
+        assert_eq!(readable_host("example.com"), "example.com");
+        assert_eq!(readable_host("xn--zz"), "xn--zz");
     }
 
     #[test]

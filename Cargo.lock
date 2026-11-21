@@ -2510,6 +2510,7 @@ dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
  "hmac",
+ "idna",
  "kdbx",
  "percent-encoding",
  "regex",

@@ -144,6 +144,10 @@ export interface Settings {
   quickSearchHotkey: string;
   lockHotkey: string;
   autotypeHotkey: string;
+  /** opens the quick search box as a form for a new entry */
+  quickSaveHotkey: string;
+  /** the group quick save used last; managed by the Rust side */
+  quickSaveGroup: string | null;
   /** milliseconds between auto-typed keys */
   autotypeKeyDelayMs: number;
   /** keep the previous file as NAME.bak before each save */
@@ -231,12 +235,54 @@ export interface HotkeyStatus {
   quickSearch: HotkeyState;
   lock: HotkeyState;
   autotype: HotkeyState;
+  quickSave: HotkeyState;
 }
+
+/** What the quick search box opens as. */
+export type QuickMode = 'search' | 'pick' | 'save';
 
 /** Payload of `quick-shown`. */
 export interface QuickShown {
-  /** auto-type: list the entries that fit the window in front, to pick one */
-  pick: boolean;
+  /** search; pick: auto-type, list the entries that fit the window in front;
+   *  save: quick save, a form for a new entry */
+  mode: QuickMode;
+}
+
+/** A group quick save can put the entry in (not the recycle bin). */
+export interface GroupChoice {
+  id: string;
+  name: string;
+  depth: number;
+}
+
+/** What the quick save form starts with, from the window it was opened over. */
+export interface QuickSavePrefill {
+  title: string;
+  /** the page's site, only for a browser */
+  url: string;
+  /** already typed in the window's user name field (never the password) */
+  username: string;
+  groups: GroupChoice[];
+  groupId: string;
+  /** entries already saved for the page's site */
+  existing: EntrySummary[];
+  /** there is a window to type the password into */
+  canType: boolean;
+}
+
+export interface QuickSaveEntry {
+  groupId: string;
+  title: string;
+  username: string;
+  password: string;
+  url: string;
+}
+
+export interface QuickSaved {
+  /** written; pending: saving after each edit is off; failed: the main window takes over */
+  file: 'written' | 'pending' | 'failed';
+  /** typing the password was asked for and could not start */
+  typeError: { code: ErrorCode } | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -251,6 +297,8 @@ export const DEFAULT_SETTINGS: Settings = {
   quickSearchHotkey: 'Ctrl+Alt+K',
   lockHotkey: 'Ctrl+Alt+L',
   autotypeHotkey: 'Ctrl+Alt+V',
+  quickSaveHotkey: 'Ctrl+Alt+N',
+  quickSaveGroup: null,
   autotypeKeyDelayMs: 20,
   backupOnSave: true,
   saveOnEdit: true,

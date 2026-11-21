@@ -619,7 +619,7 @@ export function Workspace({ status }: { status: VaultStatus }) {
       const auto = Boolean(options?.auto);
       if (auto) setAutoSaving(true);
       else setBusy(true);
-      api.saveDatabase({ force: Boolean(options?.force), upgrade: Boolean(options?.upgrade) }).then(
+      api.saveDatabase({ force: Boolean(options?.force), upgrade: Boolean(options?.upgrade) }, auto).then(
         () => {
           setBusy(false);
           setAutoSaving(false);

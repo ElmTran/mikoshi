@@ -44,7 +44,7 @@
 - Open KDBX 3.1, 4.0 and 4.1 databases with a master password, a key file, or both
 - Browse groups and entries, with fuzzy search and field filters (`title:`, `user:`, `url:`, `tag:`)
 - Copy usernames, passwords, URLs and one-time codes (TOTP). Copied secrets stay out of clipboard history and are cleared automatically
-- Quick search box and auto-type, available from anywhere through global hotkeys
+- Quick search box, auto-type and quick save (one hotkey to keep a new password for the site in front), available from anywhere through global hotkeys
 - Create and edit entries, with custom and protected fields, tags, expiry dates, icons and attachments
 - Entry history with restore, a recycle bin, and group management with drag and drop
 - Password generator for random passwords and passphrases (EFF word list), with a strength estimate
@@ -75,6 +75,7 @@ To uninstall, go to Windows Settings → Apps → Mikoshi → Uninstall. Setting
 - **Copy.** With an entry selected, `Ctrl+B` copies the username, `Ctrl+C` the password, `Ctrl+T` the one-time code and `Ctrl+U` the URL. Passwords and codes are kept out of clipboard history (`Win+V`) and cloud clipboard, and are cleared after 10 seconds by default. If you copied something else in the meantime, it is left alone.
 - **Quick search box.** Press `Ctrl+Alt+K` anywhere. Type a few letters, then press `Enter` to auto-type, `Ctrl+Enter` to type just the password, `Ctrl+C` to copy the password, `Ctrl+B` to copy the username, `Ctrl+T` to copy the one-time code, or `Esc` to close. Right-click an entry for more.
 - **Auto-type.** On a login page, press `Ctrl+Alt+V`. Mikoshi finds the matching entry from the window title and the URL in the browser's address bar, then types "username, Tab, password, Enter". Each entry can have its own sequence and window rules, using the KeePass placeholder syntax. If several entries match, you pick one; if none do, the quick search box opens. If the target window runs as administrator, Windows blocks typed input, and Mikoshi tells you so.
+- **Quick save.** On a sign-up page, or anywhere you want to keep a new password, press `Ctrl+Alt+N`. A small form opens with the site already filled in (from the browser's address bar, or the window title for other programs), along with a username you already typed on the page. Make a password with the generator (`Ctrl+G`), then press `Enter` to save, or `Ctrl+Enter` to save and type the password into the page. Mikoshi tells you if the site already has entries, and remembers the group you used last.
 - **Auto-lock.** Mikoshi locks after a period of inactivity (5 minutes by default), when you lock Windows (`Win+L`), and when the computer goes to sleep. Lock it by hand with `Ctrl+L` or `Ctrl+Alt+L`. Locking discards everything that was decrypted in memory.
 - **Tray.** Closing the main window only hides it. Mikoshi keeps running in the tray, so the global hotkeys keep working. To quit, use the tray menu.
 
@@ -100,6 +101,7 @@ All of them can be changed in Settings.
 | Quick search box | `Ctrl+Alt+K` |
 | Auto-type | `Ctrl+Alt+V` |
 | Lock | `Ctrl+Alt+L` |
+| Quick save | `Ctrl+Alt+N` |
 
 **Main window**
 

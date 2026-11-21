@@ -358,18 +358,45 @@ const QUICK_SIZE: (f64, f64) = (660.0, 520.0);
 /// got at 100% scale, so on a scaled display (or after moving to another
 /// monitor) it would come up too small and cut off the list.
 pub fn show_quick(app: &AppHandle) -> tauri::Result<()> {
-    show_quick_mode(app, false)
+    show_quick_mode(app, QuickMode::Search)
 }
 
 /// What the quick search box shows when it opens.
-#[derive(Clone, serde::Serialize)]
-pub struct QuickShown {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuickMode {
+    Search,
     /// auto-type: list the entries that fit the window in front (several
     /// matched, or the database was locked); the user picks one
-    pub pick: bool,
+    Pick,
+    /// quick save: a form for a new entry, filled in from the window in
+    /// front (features.md §3.12)
+    Save,
 }
 
-pub fn show_quick_mode(app: &AppHandle, pick: bool) -> tauri::Result<()> {
+/// Payload of `quick-shown`.
+#[derive(Clone, serde::Serialize)]
+pub struct QuickShown {
+    pub mode: QuickMode,
+}
+
+/// What the box was last opened for, so a hotkey pressed again closes only
+/// what it opened itself.
+static QUICK_MODE: Mutex<QuickMode> = Mutex::new(QuickMode::Search);
+
+/// Quick save: what was typed in the focused text field of the window in
+/// front when the hotkey was pressed (see `toggle_quick`); taken by the form.
+static CAPTURED_USERNAME: Mutex<Option<String>> = Mutex::new(None);
+
+/// The user name read when quick save was opened, once.
+pub fn take_captured_username() -> Option<String> {
+    CAPTURED_USERNAME.lock().ok().and_then(|mut c| c.take())
+}
+
+pub fn show_quick_mode(app: &AppHandle, mode: QuickMode) -> tauri::Result<()> {
+    if let Ok(mut m) = QUICK_MODE.lock() {
+        *m = mode;
+    }
     if let Some(w) = app.get_webview_window("quick") {
         if !w.is_visible().unwrap_or(false) {
             remember_foreground(app);
@@ -389,7 +416,7 @@ pub fn show_quick_mode(app: &AppHandle, pick: bool) -> tauri::Result<()> {
         if !dev_quiet() {
             w.set_focus()?;
         }
-        w.emit("quick-shown", QuickShown { pick })?;
+        w.emit("quick-shown", QuickShown { mode })?;
     }
     Ok(())
 }
@@ -414,15 +441,41 @@ pub fn hide_quick(app: &AppHandle, restore: bool) -> tauri::Result<()> {
     Ok(())
 }
 
-/// For the hotkey: a second press closes the box.
-pub fn toggle_quick(app: &AppHandle) {
+/// For the hotkeys: a second press closes the box. The other hotkey switches
+/// it over (the quick search hotkey while the box is a quick save form).
+pub fn toggle_quick(app: &AppHandle, mode: QuickMode) {
     let shown = app
         .get_webview_window("quick")
         .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
-    let result = if shown {
+    // the auto-type pick list is a search box too
+    let same = QUICK_MODE
+        .lock()
+        .map(|m| (*m == QuickMode::Save) == (mode == QuickMode::Save))
+        .unwrap_or(true);
+    let result = if shown && same {
         hide_quick(app, true)
+    } else if mode == QuickMode::Save {
+        // the user name typed in the window in front, read while it still
+        // has the focus; UI Automation may take a moment, so not here on
+        // the main thread
+        let app = app.clone();
+        std::thread::Builder::new()
+            .name("quick-save".into())
+            .spawn(move || {
+                let name = (!dev_quiet())
+                    .then(crate::browser::focused_username)
+                    .flatten();
+                if let Ok(mut c) = CAPTURED_USERNAME.lock() {
+                    *c = name;
+                }
+                if let Err(e) = show_quick_mode(&app, QuickMode::Save) {
+                    log::error!("cannot show quick save: {e}");
+                }
+            })
+            .map(|_| ())
+            .map_err(tauri::Error::from)
     } else {
-        show_quick(app)
+        show_quick_mode(app, mode)
     };
     if let Err(e) = result {
         log::error!("cannot show or hide quick search: {e}");
