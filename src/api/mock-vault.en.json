@@ -1,0 +1,266 @@
+{
+  "name": "Personal",
+  "file": "Personal.kdbx",
+  "path": "D:\\Sync\\Personal.kdbx",
+  "groups": [
+    { "id": "root", "name": "Personal", "parent": null, "kind": "root" },
+    { "id": "fav", "name": "Everyday", "parent": "root", "kind": "normal" },
+    { "id": "work", "name": "Work", "parent": "root", "kind": "normal" },
+    { "id": "srv", "name": "Servers", "parent": "work", "kind": "normal" },
+    { "id": "fin", "name": "Finance", "parent": "root", "kind": "normal" },
+    { "id": "social", "name": "Social", "parent": "root", "kind": "normal" },
+    { "id": "game", "name": "Games", "parent": "root", "kind": "normal" },
+    { "id": "bin", "name": "Recycle Bin", "parent": "root", "kind": "recycleBin" }
+  ],
+  "entries": [
+    {
+      "id": "github",
+      "group": "fav",
+      "title": "GitHub",
+      "username": "alex-rivera",
+      "password": "Vq7#mZ2!pL9x$Rt4",
+      "url": "https://github.com/login",
+      "tags": ["dev", "2FA"],
+      "otp": true,
+      "created": "2023-04-02T09:13:00",
+      "modified": "2026-11-12T14:20:00",
+      "notes": "Second factor is the authenticator app on my phone. Recovery codes are attached.",
+      "fields": [
+        { "key": "Recovery email", "value": "alex.rivera@example.net", "protected": false },
+        { "key": "Recovery code", "value": "4f2c-9a1e-77b0-c3d5", "protected": true }
+      ],
+      "attachments": [{ "name": "github-recovery-codes.txt", "size": 1229 }]
+    },
+    {
+      "id": "jd",
+      "group": "fav",
+      "title": "Amazon",
+      "username": "alex.rivera@example.net",
+      "password": "kT9@wq3Lm#2v",
+      "url": "https://www.amazon.com",
+      "created": "2021-02-11T10:00:00",
+      "modified": "2026-06-03T21:47:00"
+    },
+    {
+      "id": "mail163",
+      "group": "fav",
+      "title": "Proton Mail",
+      "username": "alex.rivera@example.org",
+      "password": "n8&Xr2pQ!vC5",
+      "url": "https://account.proton.me/login",
+      "otp": true,
+      "created": "2019-07-01T08:30:00",
+      "modified": "2025-12-30T10:05:00"
+    },
+    {
+      "id": "router",
+      "group": "fav",
+      "title": "Home router",
+      "username": "admin",
+      "password": "Ht4!Rm8@qz",
+      "url": "http://192.168.1.1",
+      "created": "2022-05-04T19:00:00",
+      "modified": "2025-08-17T19:30:00",
+      "notes": "The guest network has its own password, see the custom field.",
+      "fields": [{ "key": "Guest Wi-Fi", "value": "guest-2025-home", "protected": true }]
+    },
+    {
+      "id": "outlook",
+      "group": "work",
+      "title": "Work email",
+      "username": "alex.rivera@acme.example.com",
+      "password": "Wp3$kL8#nM2q",
+      "url": "https://outlook.office.com",
+      "tags": ["work"],
+      "created": "2024-03-01T09:00:00",
+      "modified": "2026-10-08T09:12:00"
+    },
+    {
+      "id": "vpn",
+      "group": "work",
+      "title": "Office VPN",
+      "username": "arivera",
+      "password": "Acme@2026Q3!",
+      "url": "https://vpn.acme.example.com",
+      "tags": ["work"],
+      "created": "2024-03-01T09:05:00",
+      "modified": "2026-08-02T08:40:00",
+      "expires": "2026-10-31T00:00:00",
+      "notes": "Must be changed every 90 days."
+    },
+    {
+      "id": "gitlab",
+      "group": "work",
+      "title": "GitLab",
+      "username": "arivera",
+      "password": "g7Lq!2Wx#9Pz",
+      "url": "https://git.acme.example.com/users/sign_in",
+      "otp": true,
+      "tags": ["work", "dev"],
+      "created": "2024-03-02T10:00:00",
+      "modified": "2026-09-21T16:02:00"
+    },
+    {
+      "id": "jenkins",
+      "group": "work",
+      "title": "Jenkins",
+      "username": "arivera",
+      "password": "J3nk!ns-ci-88",
+      "url": "https://ci.acme.example.com",
+      "created": "2024-03-05T15:00:00",
+      "modified": "2026-03-11T11:26:00"
+    },
+    {
+      "id": "wiki",
+      "group": "work",
+      "title": "Confluence",
+      "username": "alex.rivera@acme.example.com",
+      "password": "Cf8#mQ2!xL4p",
+      "url": "https://wiki.acme.example.com",
+      "created": "2024-03-05T15:10:00",
+      "modified": "2026-01-19T14:55:00"
+    },
+    {
+      "id": "aliyun",
+      "group": "work",
+      "title": "AWS Console",
+      "username": "alex.rivera",
+      "password": "aY6!pR3#tW9m",
+      "url": "https://signin.aws.amazon.com",
+      "otp": true,
+      "tags": ["work", "2FA"],
+      "created": "2024-06-18T11:00:00",
+      "modified": "2026-11-02T17:38:00"
+    },
+    {
+      "id": "notion",
+      "group": "work",
+      "title": "Notion",
+      "username": "alex.rivera@example.net",
+      "password": "No7!on-Ar-24",
+      "url": "https://www.notion.so",
+      "created": "2023-01-09T20:00:00",
+      "modified": "2025-11-27T22:10:00"
+    },
+    {
+      "id": "prod",
+      "group": "srv",
+      "title": "Production server",
+      "username": "root",
+      "password": "Pr0d!x7Qz#4mK2",
+      "url": "ssh://10.0.8.21",
+      "tags": ["server"],
+      "created": "2024-04-01T03:00:00",
+      "modified": "2026-07-14T03:22:00",
+      "fields": [
+        { "key": "Port", "value": "22", "protected": false },
+        { "key": "Key passphrase", "value": "id_ed25519-passphrase", "protected": true }
+      ]
+    },
+    {
+      "id": "staging",
+      "group": "srv",
+      "title": "Staging server",
+      "username": "deploy",
+      "password": "St4g!ng-Dp-9",
+      "url": "ssh://10.0.8.35",
+      "tags": ["server"],
+      "created": "2024-04-01T03:10:00",
+      "modified": "2026-05-08T15:47:00"
+    },
+    {
+      "id": "pg",
+      "group": "srv",
+      "title": "PostgreSQL primary",
+      "username": "app_rw",
+      "password": "pG#8wQ2!rT6x",
+      "url": "postgres://db.internal:5432/orders",
+      "created": "2024-04-02T09:00:00",
+      "modified": "2026-02-26T10:31:00"
+    },
+    {
+      "id": "cmb",
+      "group": "fin",
+      "title": "Online banking",
+      "username": "arivera84",
+      "password": "851204-Rv!q",
+      "url": "https://bank.example.com",
+      "created": "2018-09-06T12:00:00",
+      "modified": "2024-09-06T12:00:00",
+      "notes": "The card reader is in the left desk drawer.",
+      "fields": [{ "key": "Card ends in", "value": "8821", "protected": false }]
+    },
+    {
+      "id": "alipay",
+      "group": "fin",
+      "title": "PayPal",
+      "username": "alex.rivera@example.net",
+      "password": "Zf6#kW2!pQ8m",
+      "url": "https://www.paypal.com",
+      "created": "2018-01-02T08:00:00",
+      "modified": "2025-04-18T08:09:00"
+    },
+    {
+      "id": "tax",
+      "group": "fin",
+      "title": "Tax portal",
+      "username": "arivera84",
+      "password": "Gs9!tX4#wL2q",
+      "url": "https://tax.example.com",
+      "created": "2020-03-01T20:00:00",
+      "modified": "2026-03-30T20:15:00"
+    },
+    {
+      "id": "bili",
+      "group": "social",
+      "title": "Reddit",
+      "username": "quiet_alex",
+      "password": "b1L!b1L-22x",
+      "url": "https://www.reddit.com",
+      "created": "2017-10-01T23:00:00",
+      "modified": "2025-10-01T23:41:00"
+    },
+    {
+      "id": "douban",
+      "group": "social",
+      "title": "Goodreads",
+      "username": "alex.rivera@example.net",
+      "password": "Db7#nQ3!mK9w",
+      "url": "https://www.goodreads.com",
+      "created": "2016-12-12T13:00:00",
+      "modified": "2024-12-12T13:13:00"
+    },
+    {
+      "id": "steam",
+      "group": "game",
+      "title": "Steam",
+      "username": "alex_gg",
+      "password": "St3am!gG-4x9",
+      "url": "https://store.steampowered.com",
+      "tags": ["games"],
+      "created": "2015-08-25T01:00:00",
+      "modified": "2026-08-25T01:05:00",
+      "notes": "Steam Guard is on my phone."
+    },
+    {
+      "id": "oldbbs",
+      "group": "bin",
+      "title": "Old forum account",
+      "username": "alex2014",
+      "password": "oldpass2014",
+      "url": "http://forum.example.com",
+      "created": "2014-05-20T18:00:00",
+      "modified": "2019-05-20T18:00:00"
+    },
+    {
+      "id": "oldmail",
+      "group": "bin",
+      "title": "Former employer email",
+      "username": "alex@oldcorp.example.com",
+      "password": "Old#C0rp!x",
+      "url": "https://mail.oldcorp.example.com",
+      "created": "2020-07-01T09:00:00",
+      "modified": "2022-06-30T17:59:00"
+    }
+  ]
+}

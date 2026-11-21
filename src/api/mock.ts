@@ -2,7 +2,9 @@
 // Tauri so the UI can be worked on in a normal browser. Demo data, same rules
 // (nothing secret in the views). Never part of a production build.
 
-import demo from './mock-vault.json';
+import demoZh from './mock-vault.json';
+import demoEn from './mock-vault.en.json';
+import { resolveLocale } from '../i18n/core';
 import {
   AppError,
   DEFAULT_SETTINGS,
@@ -36,11 +38,21 @@ interface DemoEntry {
   autotype?: { enabled: boolean; sequence: string; associations: { window: string; sequence: string }[] };
 }
 
-const data = demo as {
+/** Demo data in the UI language (chosen once, at load), for screenshots. */
+function demoLocale() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('mikoshi.settings') ?? '{}') as Partial<Settings>;
+    return resolveLocale(saved.language ?? 'system');
+  } catch {
+    return resolveLocale('system');
+  }
+}
+
+const data = (demoLocale() === 'zh-CN' ? demoZh : demoEn) as {
   name: string;
   file: string;
   path: string;
-  groups: typeof demo.groups;
+  groups: typeof demoZh.groups;
   entries: DemoEntry[];
 };
 
