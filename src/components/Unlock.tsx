@@ -3,7 +3,7 @@ import { api } from '../api';
 import { AppError, type DialogText, type VaultStatus } from '../api/types';
 import { usePrefs } from '../app/contexts';
 import type { MessageKey } from '../i18n/core';
-import { AppMark } from './bits';
+import { AppMark, Keys } from './bits';
 import { Icon } from './Icon';
 import { NewDatabaseForm } from './NewDatabase';
 import { useDismiss } from './useDismiss';
@@ -185,12 +185,84 @@ export function UnlockForm({ status, compact, onUnlocked, onNew }: Props) {
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => setCaps(e.getModifierState('CapsLock'));
 
+  const eye = (
+    <button
+      type="button"
+      className="act"
+      title={t(show ? 'unlock.hidePassword' : 'unlock.showPassword')}
+      aria-label={t(show ? 'unlock.hidePassword' : 'unlock.showPassword')}
+      aria-pressed={show}
+      onClick={() => setShow((s) => !s)}
+    >
+      <Icon name={show ? 'eyeOff' : 'eye'} />
+    </button>
+  );
+  const message = error ? (
+    <span className="error">
+      <Icon name="warn" />
+      {t(error)}
+    </span>
+  ) : busy && compact ? (
+    <span className="hint">{t('unlock.unlocking')}</span>
+  ) : caps ? (
+    <span className="caps">{t('unlock.capsLock')}</span>
+  ) : info?.demo ? (
+    <span className="hint">{t('unlock.demoHint')}</span>
+  ) : null;
+
+  // The quick search box: one row shaped like its search row (lock icon,
+  // password, database name), and the keys underneath like its footer.
+  if (compact)
+    return (
+      <form className="unlock-form compact" onSubmit={submit} autoComplete="off">
+        <div className="qs-input qs-unlock" ref={box}>
+          <Icon name="lock" size={20} />
+          <input
+            id="master-password"
+            ref={input}
+            type={show ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError(null);
+            }}
+            onKeyDown={onKey}
+            onKeyUp={onKey}
+            placeholder={t('quick.locked')}
+            aria-label={t('unlock.password')}
+            spellCheck={false}
+            autoComplete="off"
+            aria-invalid={Boolean(error)}
+            aria-describedby="unlock-msg"
+          />
+          {eye}
+          <span className="qs-db">
+            <Icon name="vault" />
+            {status.name}
+          </span>
+        </div>
+        <footer className="qs-foot qs-unlock-foot">
+          <span className="unlock-msg" id="unlock-msg" role="alert">
+            {message}
+          </span>
+          <button type="submit" className="hint qs-unlock-go" disabled={busy}>
+            <Keys keys={['Enter']} />
+            {t('unlock.submit')}
+          </button>
+          <span className="hint">
+            <Keys keys={['Esc']} />
+            {t('quick.close')}
+          </span>
+        </footer>
+      </form>
+    );
+
   return (
-    <form className={compact ? 'unlock-form compact' : 'unlock-form'} onSubmit={submit} autoComplete="off">
-      {!compact && <h1 className="unlock-title">{t('unlock.title')}</h1>}
-      {!compact && <DatabasePicker status={status} onError={setError} />}
+    <form className="unlock-form" onSubmit={submit} autoComplete="off">
+      <h1 className="unlock-title">{t('unlock.title')}</h1>
+      <DatabasePicker status={status} onError={setError} />
       <label className="unlock-label" htmlFor="master-password">
-        {compact ? t('quick.locked') : t('unlock.password')}
+        {t('unlock.password')}
       </label>
       <div className="unlock-input" ref={box}>
         <input
@@ -209,62 +281,43 @@ export function UnlockForm({ status, compact, onUnlocked, onNew }: Props) {
           aria-invalid={Boolean(error)}
           aria-describedby="unlock-msg"
         />
-        <button
-          type="button"
-          className="act"
-          title={t(show ? 'unlock.hidePassword' : 'unlock.showPassword')}
-          aria-label={t(show ? 'unlock.hidePassword' : 'unlock.showPassword')}
-          aria-pressed={show}
-          onClick={() => setShow((s) => !s)}
-        >
-          <Icon name={show ? 'eyeOff' : 'eye'} />
-        </button>
+        {eye}
       </div>
       <div className="unlock-msg" id="unlock-msg" role="alert">
-        {error ? (
-          <span className="error">
-            <Icon name="warn" />
-            {t(error)}
-          </span>
-        ) : caps ? (
-          <span className="caps">{t('unlock.capsLock')}</span>
-        ) : info?.demo ? (
-          <span className="hint">{t('unlock.demoHint')}</span>
-        ) : null}
+        {message}
       </div>
-      {!compact &&
-        (keyFile ? (
-          <div className="unlock-keyfile" title={keyFile}>
-            <Icon name="key" />
-            <span className="unlock-keyfile-text">
-              <span className="unlock-keyfile-label">{t('unlock.keyFileLabel')}</span>
-              <span className="unlock-keyfile-name">{baseName(keyFile)}</span>
-            </span>
-            <button
-              type="button"
-              className="act"
-              title={t('unlock.changeKeyFile')}
-              aria-label={t('unlock.changeKeyFile')}
-              onClick={() => void chooseKeyFile()}
-            >
-              <Icon name="edit" size={14} />
-            </button>
-            <button
-              type="button"
-              className="act"
-              title={t('unlock.removeKeyFile')}
-              aria-label={t('unlock.removeKeyFile')}
-              onClick={() => setKeyFile(null)}
-            >
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-        ) : (
-          <button type="button" className="link-btn" onClick={() => void chooseKeyFile()}>
-            <Icon name="key" />
-            {t('unlock.keyfile')}
+      {keyFile ? (
+        <div className="unlock-keyfile" title={keyFile}>
+          <Icon name="key" />
+          <span className="unlock-keyfile-text">
+            <span className="unlock-keyfile-label">{t('unlock.keyFileLabel')}</span>
+            <span className="unlock-keyfile-name">{baseName(keyFile)}</span>
+          </span>
+          <button
+            type="button"
+            className="act"
+            title={t('unlock.changeKeyFile')}
+            aria-label={t('unlock.changeKeyFile')}
+            onClick={() => void chooseKeyFile()}
+          >
+            <Icon name="edit" size={14} />
           </button>
-        ))}
+          <button
+            type="button"
+            className="act"
+            title={t('unlock.removeKeyFile')}
+            aria-label={t('unlock.removeKeyFile')}
+            onClick={() => setKeyFile(null)}
+          >
+            <Icon name="close" size={14} />
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="link-btn" onClick={() => void chooseKeyFile()}>
+          <Icon name="key" />
+          {t('unlock.keyfile')}
+        </button>
+      )}
       <button type="submit" className="btn primary unlock-submit" disabled={busy}>
         {busy ? t('unlock.unlocking') : t('unlock.submit')}
       </button>

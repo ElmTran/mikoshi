@@ -184,10 +184,34 @@ html.browser[data-theme].window-quick {
 .qs-locked {
   padding: 22px 24px 24px;
 }
-.unlock-form.compact .unlock-label {
-  margin: 0 0 4px;
-  font-size: var(--fs-body);
-  letter-spacing: 0;
+
+/* Locked: the search row becomes the password row and the footer keeps its
+   key hints, so the box looks the same, only asking for the password. */
+.unlock-form.compact {
+  gap: 0;
+}
+.qs-unlock .act {
+  flex: none;
+  width: 30px;
+  height: 28px;
+}
+.qs-unlock-foot {
+  align-items: center;
+  margin: 0 24px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--qs-line);
+}
+.qs-unlock-foot .unlock-msg {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  font-size: inherit;
+}
+.qs-unlock-go {
+  color: inherit;
+  font: inherit;
+}
+.qs-unlock-go:hover:not(:disabled) {
   color: var(--ink);
 }
 

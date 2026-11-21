@@ -220,9 +220,7 @@ export function QuickApp() {
               <p className="qs-empty">{t('quick.noDatabase')}</p>
             </div>
           ) : status.locked ? (
-            <div className="qs-locked">
-              <UnlockForm status={status} compact />
-            </div>
+            <UnlockForm status={status} compact />
           ) : (
             <>
               <label className="qs-input">

@@ -408,7 +408,7 @@ export const enUS: Record<MessageKey, string> = {
   'quick.copyTotp': 'Copy code',
   'quick.close': 'Close',
   'quick.copied': 'Copied',
-  'quick.locked': 'The database is locked. Enter the master password to unlock it.',
+  'quick.locked': 'Locked. Enter the master password',
   'quick.noDatabase': 'No database is open yet. Choose one in the main window first.',
   'quick.noTotp': 'This entry has no one-time code',
   'quick.hasTotp': 'Has a one-time code',

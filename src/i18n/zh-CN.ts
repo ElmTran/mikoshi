@@ -395,7 +395,7 @@ export const zhCN = {
   'quick.copyTotp': '复制验证码',
   'quick.close': '关闭',
   'quick.copied': '已复制',
-  'quick.locked': '密码库已锁定，输入主密码解锁',
+  'quick.locked': '已锁定，输入主密码解锁',
   'quick.noDatabase': '还没有打开密码库。先在主窗口里选择一个。',
   'quick.noTotp': '这个条目没有验证码',
   'quick.hasTotp': '有验证码',
