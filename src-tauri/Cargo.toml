@@ -1,6 +1,6 @@
 [package]
 name = "mikoshi"
-version = "0.9.4"
+version = "0.9.5"
 description = "Mikoshi: a keyboard-first KeePass password manager for Windows"
 edition.workspace = true
 license.workspace = true
