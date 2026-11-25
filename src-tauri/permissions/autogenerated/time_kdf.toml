@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-time-kdf"
+description = "Enables the time_kdf command without any pre-configured scope."
+commands.allow = ["time_kdf"]
+
+[[permission]]
+identifier = "deny-time-kdf"
+description = "Denies the time_kdf command without any pre-configured scope."
+commands.deny = ["time_kdf"]

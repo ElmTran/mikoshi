@@ -47,6 +47,46 @@ impl Key {
         self.password.is_none() && self.keyfile.is_none()
     }
 
+    pub fn has_password(&self) -> bool {
+        self.password.is_some()
+    }
+
+    pub fn has_keyfile(&self) -> bool {
+        self.keyfile.is_some()
+    }
+
+    /// This key with the password part of `other` (or none, if it has none),
+    /// for changing one part of a key and keeping the other.
+    pub fn with_password_of(mut self, other: &Key) -> Key {
+        self.password = other.password.clone();
+        self
+    }
+
+    /// This key with the key file part of `other` (or none).
+    pub fn with_keyfile_of(mut self, other: &Key) -> Key {
+        self.keyfile = other.keyfile.clone();
+        self
+    }
+
+    /// Whether the password part is the same as `other`'s (both absent counts).
+    /// Compares in constant time.
+    pub fn same_password(&self, other: &Key) -> bool {
+        match (&self.password, &other.password) {
+            (Some(a), Some(b)) => same_bytes(&a[..], &b[..]),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether the key file part is the same as `other`'s (both absent counts).
+    pub fn same_keyfile(&self, other: &Key) -> bool {
+        match (&self.keyfile, &other.keyfile) {
+            (Some(a), Some(b)) => same_bytes(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
     pub(crate) fn composite(&self) -> Result<Zeroizing<[u8; 32]>> {
         let mut parts: Vec<&[u8]> = Vec::new();
         if let Some(p) = &self.password {
@@ -60,6 +100,11 @@ impl Key {
         }
         Ok(Zeroizing::new(sha256(&parts)))
     }
+}
+
+/// Equal bytes, without stopping at the first difference.
+fn same_bytes(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn keyfile_key(data: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
@@ -159,6 +204,37 @@ mod tests {
         assert_eq!(
             &keyfile_key(nothex.as_bytes()).unwrap()[..],
             &sha256(&[nothex.as_bytes()])[..]
+        );
+    }
+
+    #[test]
+    fn parts_can_be_kept_and_compared() {
+        let both = Key::new()
+            .with_password("pw")
+            .with_keyfile(b"file")
+            .unwrap();
+        let other_pw = Key::new().with_password("other").with_keyfile_of(&both);
+        assert!(other_pw.same_keyfile(&both));
+        assert!(!other_pw.same_password(&both));
+        assert!(other_pw.has_password() && other_pw.has_keyfile());
+
+        let file_only = Key::new().with_keyfile_of(&both);
+        assert!(!file_only.has_password());
+        assert!(!file_only.same_password(&both));
+        assert!(
+            Key::new().same_password(&file_only),
+            "both without a password"
+        );
+
+        let pw_again = Key::new().with_password("pw");
+        assert!(pw_again.same_password(&both));
+        assert_eq!(
+            Key::new()
+                .with_password_of(&both)
+                .with_keyfile_of(&both)
+                .composite()
+                .unwrap()[..],
+            both.composite().unwrap()[..]
         );
     }
 

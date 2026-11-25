@@ -49,6 +49,7 @@
 - Entry history with restore, a recycle bin, and group management with drag and drop
 - Password generator for random passwords and passphrases (EFF word list), with a strength estimate
 - Saves every change immediately with a safe write and a backup, and warns you when the file was changed somewhere else
+- Change the master password and key file, the cipher and the key derivation settings
 - Locks automatically when idle, when Windows locks, or when the computer sleeps. Lives in the system tray
 - Light and dark themes; English and Simplified Chinese
 
@@ -89,6 +90,7 @@ To uninstall, go to Windows Settings → Apps → Mikoshi → Uninstall. Setting
 - **Password generator.** Press `Ctrl+G`, or click the key button next to the password field while editing. Choose the length and character sets, leave out look-alike characters, or generate a passphrase from English words. A strength estimate is shown.
 - **Saving.** By default every change is written to the file right away. Mikoshi writes to a temporary file, checks it, and only then replaces the database, keeping the previous version as `name.kdbx.bak` (this can be turned off). If you prefer, turn off **Save every change at once** in Settings and save with `Ctrl+S`; the title bar then shows when there are unsaved changes.
 - **File changed elsewhere** (for example, just synced, or open in KeePassXC at the same time). Mikoshi asks before saving: reload (dropping your changes), overwrite, or cancel. If this happens while locking, your changes are saved as `name.mikoshi-conflict-time.kdbx`, so nothing is lost on either side.
+- **Database settings.** Settings → Database (there while a database is unlocked). **Change master key…** sets a new master password or replaces or removes the key file; it asks for the current master password first. Under Encryption you can pick the cipher (AES-256, ChaCha20, Twofish), the key derivation (Argon2id, Argon2d, AES-KDF) and its parameters, and compression; **Tune to 1 second here** works out the iterations for you. Changes are saved when you click **Apply**. After a master key change, the `.bak` next to the database still opens with the old key, and Mikoshi offers to delete it.
 
 ## Keyboard shortcuts
 
@@ -129,7 +131,7 @@ The arrow keys, `Home`, `End`, `PageUp` and `PageDown` move between groups and e
 
 - Nothing to import or export. Open your existing `.kdbx` file; the apps can take turns with the same file.
 - **Mikoshi writes KDBX 4.1 only.** The first time you save a KDBX 3.1 or 4.0 database, Mikoshi asks first; after that the file is 4.1. KeePass 2.48 and later and KeePassXC 2.8 can open it; older versions cannot.
-- The cipher, key derivation settings and compression are kept as they are. Mikoshi cannot change them or the master key yet (see the [Roadmap](#roadmap)); use KeePassXC for that for now.
+- The cipher, key derivation settings and compression are kept as they are. To change them, go to Settings → Database.
 - Saving rewrites only what you changed. Data written by other clients that Mikoshi does not understand is kept as it is.
 - One-time codes: Mikoshi reads KeePassXC's `otp` field, KeePass 2's built-in `TimeOtp-*` fields and the older `TOTP Seed` format. If you change a code in Mikoshi, it is stored as an `otp` field.
 - Permanent deletions are recorded in the database's list of deleted objects, so sync tools and other clients know the item was deleted on purpose.
@@ -146,7 +148,6 @@ The arrow keys, `Home`, `End`, `PageUp` and `PageDown` move between groups and e
 
 Planned for after 1.0:
 
-- **Database settings:** change the master password and key file, and the cipher, key derivation and compression settings.
 - **Several databases open at once:** for example, a personal and a work database side by side.
 
 Not available today: browser extension, SSH agent, password breach checks, import and export, KeeShare, Windows Hello unlock, YubiKey, and macOS or Linux versions.

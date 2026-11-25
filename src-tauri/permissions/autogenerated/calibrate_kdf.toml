@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-calibrate-kdf"
+description = "Enables the calibrate_kdf command without any pre-configured scope."
+commands.allow = ["calibrate_kdf"]
+
+[[permission]]
+identifier = "deny-calibrate-kdf"
+description = "Denies the calibrate_kdf command without any pre-configured scope."
+commands.deny = ["calibrate_kdf"]

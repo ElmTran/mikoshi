@@ -2444,3 +2444,64 @@ div.seg > button.on.danger {
   line-height: 1.6;
   color: var(--ink-3);
 }
+
+/* ---------------------------------------------------------------- database settings */
+
+.row-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+}
+.row-value {
+  font-size: 13px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.num-input {
+  width: 128px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.select:disabled,
+.num-input:disabled {
+  opacity: 0.5;
+}
+.settings-rows > .settings-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.settings-warn .icon {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* the master key dialog: a short form, the choices as small pills */
+.dialog.change-key {
+  width: min(440px, calc(100vw - 48px));
+}
+.change-key-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.change-key-form .unlock-label:not(:first-child) {
+  margin-top: 14px;
+}
+.segmented.small {
+  justify-content: flex-start;
+}
+.segmented.small > .seg {
+  flex: none;
+  padding: 0 12px;
+}
+.change-key-form .dialog-hint {
+  margin-top: 12px;
+}

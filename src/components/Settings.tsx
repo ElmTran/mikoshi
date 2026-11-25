@@ -7,11 +7,14 @@ import {
   type HotkeyStatus,
   type LanguagePref,
   type ThemePref,
+  type VaultStatus,
 } from '../api/types';
 import { usePrefs, useToast } from '../app/contexts';
 import type { MessageKey } from '../i18n/core';
 import { SHORTCUT_ACTIONS, shortcutConflicts, usableShortcut } from '../shortcuts';
+import { DatabasePanel } from './DatabaseSettings';
 import { HotkeyField } from './HotkeyField';
+import { Section, Switch } from './settingsBits';
 import { Icon, type IconName } from './Icon';
 
 const THEMES: { value: ThemePref; icon: IconName }[] = [
@@ -25,12 +28,22 @@ const IDLE_MINUTES = [1, 2, 5, 10, 15, 30, 60, 0];
 const CLEAR_SECONDS = [5, 10, 20, 30, 60, 0];
 const KEY_DELAYS = [5, 10, 20, 50, 100];
 
-const CATEGORIES = ['appearance', 'security', 'saving', 'shortcuts', 'autotype', 'system', 'about'] as const;
+const CATEGORIES = [
+  'appearance',
+  'security',
+  'saving',
+  'database',
+  'shortcuts',
+  'autotype',
+  'system',
+  'about',
+] as const;
 type Category = (typeof CATEGORIES)[number];
 const CATEGORY_ICONS: Record<Category, IconName> = {
   appearance: 'sun',
   security: 'lock',
   saving: 'download',
+  database: 'vault',
   shortcuts: 'keyboard',
   autotype: 'keyboard',
   system: 'monitor',
@@ -40,46 +53,6 @@ const CATEGORY_ICONS: Record<Category, IconName> = {
 /** The offered choices, plus the current value if it is not one of them. */
 const withCurrent = (choices: number[], current: number) =>
   choices.includes(current) ? choices : [...choices, current].sort((a, b) => (a || 1e9) - (b || 1e9));
-
-function Switch({
-  on,
-  label,
-  hint,
-  onToggle,
-}: {
-  on: boolean;
-  label: string;
-  hint?: string;
-  onToggle: () => void;
-}) {
-  return (
-    <button type="button" role="switch" aria-checked={on} className="switch-row" onClick={onToggle}>
-      <span className="switch-text">
-        <span>{label}</span>
-        {hint && <span className="switch-hint">{hint}</span>}
-      </span>
-      <span className={on ? 'switch on' : 'switch'} aria-hidden="true" />
-    </button>
-  );
-}
-
-function Section({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string | undefined;
-  children: ReactNode;
-}) {
-  return (
-    <section className="settings-section">
-      <h2 className="settings-section-title">{title}</h2>
-      {hint && <p className="settings-section-hint">{hint}</p>}
-      <div className="settings-rows">{children}</div>
-    </section>
-  );
-}
 
 /**
  * The settings, as a page over the window (the title bar stays). Categories
@@ -102,6 +75,17 @@ function SettingsPage({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => root.current?.focus(), []);
+
+  // the database category is there only while a database is unlocked
+  const [vault, setVault] = useState<VaultStatus | null>(null);
+  useEffect(() => {
+    api.vaultStatus().then(setVault, () => {});
+    const off = listen<VaultStatus>('vault-changed', setVault);
+    return () => void off.then((f) => f());
+  }, []);
+  const unlocked = vault !== null && !vault.locked;
+  const categories = CATEGORIES.filter((c) => c !== 'database' || unlocked);
+  const shown: Category = cat === 'database' && !unlocked ? 'security' : cat;
 
   const fail = useCallback(
     (e: unknown) =>
@@ -321,6 +305,8 @@ function SettingsPage({ onClose }: { onClose: () => void }) {
         </Section>
       </>
     ),
+    // unmounted when the database locks: the forms in it forget what was typed
+    database: () => (vault && unlocked ? <DatabasePanel status={vault} /> : null),
     autotype: () => (
       <Section title={t('settings.cat.autotype')}>
         {select(
@@ -393,12 +379,12 @@ function SettingsPage({ onClose }: { onClose: () => void }) {
           {t('settings.back')}
         </button>
         <h1 className="settings-heading">{t('settings.title')}</h1>
-        {CATEGORIES.map((c) => (
+        {categories.map((c) => (
           <button
             key={c}
             type="button"
-            className={c === cat ? 'settings-cat on' : 'settings-cat'}
-            aria-current={c === cat ? 'page' : undefined}
+            className={c === shown ? 'settings-cat on' : 'settings-cat'}
+            aria-current={c === shown ? 'page' : undefined}
             onClick={() => setCat(c)}
           >
             <Icon name={CATEGORY_ICONS[c]} />
@@ -406,8 +392,8 @@ function SettingsPage({ onClose }: { onClose: () => void }) {
           </button>
         ))}
       </nav>
-      <div className="settings-content" key={cat}>
-        {content[cat]()}
+      <div className="settings-content" key={shown}>
+        {content[shown]()}
       </div>
     </div>
   );

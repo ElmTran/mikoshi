@@ -593,6 +593,28 @@ export async function call<T>(cmd: string, args: Record<string, unknown> = {}): 
       case 'set_autostart':
         mockAutostart = Boolean(args.enabled);
         return mockAutostart;
+      // shown only; changing the demo's key or encryption is not offered
+      case 'get_database_settings':
+        return {
+          encryption: {
+            cipher: 'aes256',
+            kdf: 'argon2id',
+            memory: 64 << 20,
+            iterations: 10,
+            parallelism: 4,
+            compressed: true,
+          },
+          hasPassword: true,
+          hasKeyFile: false,
+          version: '4.1',
+          hasBackup: false,
+        };
+      case 'time_kdf':
+        return 900;
+      case 'calibrate_kdf':
+      case 'apply_database_settings':
+      case 'remove_backup':
+        throw new AppError('notYet');
       default:
         throw new AppError('internal');
     }

@@ -137,23 +137,51 @@ pub fn time_kdf(kdf: &Kdf) -> Result<Duration> {
 /// a cost per iteration, so two short runs are timed and a line is fitted;
 /// scaling a single short run would overestimate the per-iteration cost.
 pub fn calibrate_argon2id(memory: u64, parallelism: u32, target: Duration) -> Result<Kdf> {
-    let kdf = |iterations| Kdf::Argon2 {
-        id: true,
-        memory,
-        iterations,
-        parallelism,
-        version: ARGON2_VERSION,
+    calibrate(
+        &Kdf::Argon2 {
+            id: true,
+            memory,
+            iterations: 2,
+            parallelism,
+            version: ARGON2_VERSION,
+        },
+        target,
+    )
+}
+
+/// `kdf` with its work factor (Argon2 iterations, AES-KDF rounds) chosen so
+/// one run takes about `target` here; its other parameters stay. Argon2
+/// iterations land between 2 and 10 000, AES-KDF rounds at 100 000 or more.
+pub fn calibrate(kdf: &Kdf, target: Duration) -> Result<Kdf> {
+    let with = |n: u64| match kdf.clone() {
+        Kdf::Aes { .. } => Kdf::Aes { rounds: n },
+        Kdf::Argon2 {
+            id,
+            memory,
+            parallelism,
+            version,
+            ..
+        } => Kdf::Argon2 {
+            id,
+            memory,
+            iterations: n,
+            parallelism,
+            version,
+        },
     };
-    let (lo, hi) = (2u64, 10u64);
+    let (lo, hi, min, max) = match kdf {
+        Kdf::Aes { .. } => (200_000u64, 2_000_000u64, 100_000u64, u64::MAX / 2),
+        Kdf::Argon2 { .. } => (2, 10, 2, 10_000),
+    };
     // the faster of two tries each: the first run also pays for warming up
     let time = |n| -> Result<f64> {
-        let a = time_kdf(&kdf(n))?;
-        let b = time_kdf(&kdf(n))?;
+        let a = time_kdf(&with(n))?;
+        let b = time_kdf(&with(n))?;
         Ok(a.min(b).as_secs_f64())
     };
     let (t_lo, t_hi) = (time(lo)?, time(hi)?);
-    let per_iteration = ((t_hi - t_lo) / (hi - lo) as f64).max(1e-6);
-    let fixed = (t_lo - per_iteration * lo as f64).max(0.0);
-    let iterations = ((target.as_secs_f64() - fixed) / per_iteration).round();
-    Ok(kdf((iterations.max(0.0) as u64).clamp(2, 10_000)))
+    let per_unit = ((t_hi - t_lo) / (hi - lo) as f64).max(1e-12);
+    let fixed = (t_lo - per_unit * lo as f64).max(0.0);
+    let n = ((target.as_secs_f64() - fixed) / per_unit).round();
+    Ok(with((n.max(0.0) as u64).clamp(min, max)))
 }

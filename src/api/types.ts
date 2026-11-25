@@ -485,6 +485,9 @@ export const ERROR_CODES = [
   'writeFailed',
   'tooLarge',
   'noCharacters',
+  'currentKeyWrong',
+  'kdfInvalid',
+  'kdfFailed',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -495,4 +498,36 @@ export class AppError extends Error {
     super(code);
     this.code = code;
   }
+}
+
+// ---------------------------------------------------------------- database settings
+
+export type CipherName = 'aes256' | 'chaCha20' | 'twofish';
+export type KdfName = 'argon2id' | 'argon2d' | 'aesKdf';
+
+/** For AES-KDF `iterations` is its rounds; `memory` (bytes) and `parallelism` are Argon2's. */
+export interface Encryption {
+  cipher: CipherName;
+  kdf: KdfName;
+  memory: number;
+  iterations: number;
+  parallelism: number;
+  compressed: boolean;
+}
+
+export interface DatabaseSettings {
+  encryption: Encryption;
+  hasPassword: boolean;
+  hasKeyFile: boolean;
+  /** "4.1" once Mikoshi has saved it */
+  version: string;
+  /** a NAME.bak lies next to the file */
+  hasBackup: boolean;
+}
+
+export type PasswordInput = { kind: 'keep' } | { kind: 'remove' } | { kind: 'set'; value: string };
+export type KeyFileInput = { kind: 'keep' } | { kind: 'remove' } | { kind: 'set'; path: string };
+export interface KeyInput {
+  password: PasswordInput;
+  keyFile: KeyFileInput;
 }

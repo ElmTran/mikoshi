@@ -14,13 +14,15 @@ interface Props {
   actions: DialogAction[];
   /** Esc, the backdrop, or the × button */
   onClose: () => void;
+  /** extra class on the sheet, e.g. for a wider one */
+  className?: string;
 }
 
 /**
  * A modal over the whole window: a sheet with a title, the message and a row
  * of actions. Enter runs the primary action, Esc closes.
  */
-export function Dialog({ title, children, actions, onClose }: Props) {
+export function Dialog({ title, children, actions, onClose, className }: Props) {
   const card = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,7 +48,13 @@ export function Dialog({ title, children, actions, onClose }: Props) {
 
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-label={title} ref={card}>
+      <div
+        className={className ? `dialog ${className}` : 'dialog'}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        ref={card}
+      >
         <h2 className="dialog-title">{title}</h2>
         {children && <div className="dialog-body">{children}</div>}
         <div className="dialog-actions">

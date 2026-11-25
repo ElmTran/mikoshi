@@ -11,6 +11,9 @@ import {
   type AppInfo,
   type CopyResult,
   type CustomIcon,
+  type DatabaseSettings,
+  type Encryption,
+  type KeyInput,
   type Deleted,
   type DialogText,
   type EditableEntry,
@@ -143,6 +146,24 @@ export const api = {
     call<string | null>('create_key_file', { text, fileName }),
   createDatabase: (path: string, name: string, password: string, keyFile: string | null) =>
     call<VaultStatus>('create_database', { path, name, password: password || null, keyFile }),
+  getDatabaseSettings: () => call<DatabaseSettings>('get_database_settings'),
+  /**
+   * changes the master key and/or the encryption settings and saves at once. A new key
+   * needs the current password (or, without one, the current key file)
+   */
+  applyDatabaseSettings: (args: {
+    currentPassword?: string | null;
+    currentKeyFile?: string | null;
+    key?: KeyInput | null;
+    encryption?: Encryption | null;
+    options?: SaveOptions;
+  }) => call<DatabaseSettings>('apply_database_settings', { ...args }),
+  /** how long unlocking takes here with these settings, in milliseconds */
+  timeKdf: (encryption: Encryption) => call<number>('time_kdf', { encryption }),
+  /** the settings with iterations (rounds) set so unlocking takes about a second here */
+  calibrateKdf: (encryption: Encryption) => call<Encryption>('calibrate_kdf', { encryption }),
+  /** deletes NAME.bak next to the database; false when there was none */
+  removeBackup: () => call<boolean>('remove_backup'),
   generatePassword: (options: GeneratorOptions) => call<Generated>('generate_password', { options }),
   passwordStrength: (password: string) => call<Strength>('password_strength', { password }),
   /** copies a value already on screen (a generated password) as a secret */

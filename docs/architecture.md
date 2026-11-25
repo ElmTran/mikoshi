@@ -79,6 +79,11 @@ M1 定下的工程结构和前后端边界。之后每个里程碑都按这里�
 | `choose_new_database` | 新库的保存对话框；已经存在的文件一律拒绝（`fileExists`） | ✓ | |
 | `create_key_file` | 在选的位置新生成一个 XML 2.0 密钥文件，只返回路径 | ✓ | |
 | `create_database` | 新建库：校准 KDF、写文件、直接打开 | ✓ | |
+| `get_database_settings` | 打开的库的加密设置、主密钥由什么组成（有没有主密码、密钥文件）、文件格式、旁边有没有 `.bak`；没有秘密 | ✓ | |
+| `apply_database_settings` | 改主密钥和/或加密设置并立即保存。改主密钥要再给一次当前的主密码（库没有主密码时给当前的密钥文件）。`options` 同 `save_database` | ✓ | |
+| `time_kdf` | 按给的参数跑一次 KDF，返回本机耗时（毫秒），用来预计解锁时间 | ✓ | |
+| `calibrate_kdf` | 调整迭代次数（AES-KDF 是轮数），让本机解锁约 1 秒 | ✓ | |
+| `remove_backup` | 删掉库旁边的 `名字.bak` | ✓ | |
 | `generate_password` | 按选项生成密码或口令短语，返回结果、熵和强度；记住选项（不记结果） | ✓ | |
 | `password_strength` | zxcvbn 强度估算（编辑器和新建库的强度条） | ✓ | |
 | `copy_secret` | 把界面上已经显示的值（生成的密码）按秘密复制：不进剪贴板历史，定时清除 | ✓ | |
@@ -114,7 +119,7 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 
 命令失败时只返回一个错误码，例如 `{"code": "locked"}`，前端按当前语言显示对应的文案（`error.locked` 等）。错误里**不带任何用户数据**，所以可以放心写进日志或显示出来。错误码定义在 `src-tauri/src/error.rs`，前端的对应类型在 `src/api/types.ts`。
 
-解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`fieldName`（自定义字段名不能为空、重复或占用标准/验证码字段名）、`expiry`（过期时间无法识别）、`unsavedChanges`（有未保存的修改，等用户决定）、`saveConflict`（文件被别处改过）、`saveFailed`（写不了文件或加密后读不回来）、`formatUpgrade`（保存会变成 KDBX 4.1，等用户同意）、`notAllowed`（这个操作不能用在这里，比如删除根分组）、`emptyName`（名字为空）、`fileExists`（新库或密钥文件的位置已经有文件）、`writeFailed`（文件写不进去）、`tooLarge`（附件超过 256 MB）、`noCharacters`（生成器一种字符都没选）、`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）。
+解锁相关的错误码：`emptyPassword`（没给主密码也没给密钥文件）、`noDatabase`、`fileNotFound`、`fileUnreadable`、`keyFileUnreadable`、`wrongKey`、`corrupt`、`unsupported`、`keePass1`、`notKeePass`。其他：`fieldName`（自定义字段名不能为空、重复或占用标准/验证码字段名）、`expiry`（过期时间无法识别）、`unsavedChanges`（有未保存的修改，等用户决定）、`saveConflict`（文件被别处改过）、`saveFailed`（写不了文件或加密后读不回来）、`formatUpgrade`（保存会变成 KDBX 4.1，等用户同意）、`notAllowed`（这个操作不能用在这里，比如删除根分组）、`emptyName`（名字为空）、`fileExists`（新库或密钥文件的位置已经有文件）、`writeFailed`（文件写不进去）、`tooLarge`（附件超过 256 MB）、`noCharacters`（生成器一种字符都没选）、`totpInvalid`（验证码设置无法识别）、`unsafeUrl`（不是 http/https 网址）、`clipboard`（剪贴板被别的程序占着）、`hotkeyTaken`（热键被别的程序占用）、`hotkeyInvalid`（不是可用的热键）、`autostart`（改不了开机启动）、`notYet`（功能在后面的里程碑接入）、`currentKeyWrong`（改主密钥时给的当前主密码或密钥文件不对）、`kdfInvalid`（加密参数超出范围）、`kdfFailed`（KDF 跑不起来，比如内存不够）。
 
 ### 编辑与保存（M7）
 
@@ -143,6 +148,15 @@ Rust 端发给所有窗口，用来让多个窗口保持一致：
 - 密钥文件：32 字节随机数，KeePass 2.47+ / KeePassXC 的 XML 2.0 格式，带 SHA-256 前 4 字节的校验
 - 生成器（`crates/mikoshi-core/src/generator.rs`）：系统随机源，拒绝采样避免取模偏差，每种选中的字符至少一个再打乱；口令短语用 EFF 大词表（7776 个词，CC BY 3.0，`eff_large_wordlist.txt` 原样放在源码里）。强度用 Rust 的 `zxcvbn` crate，词典不进前端
 - 编辑器密码栏右边的钥匙按钮打开生成器，`Ctrl+G` 单独打开、只复制
+
+### 数据库设置
+
+- 设置页的"数据库"分类，库解锁时才出现；锁定时整个分类卸载，表单里输过的东西跟着丢掉
+- 核心库 `crates/mikoshi-core/src/vault/dbsettings.rs`：改动先在保存任务的副本上做（`prepare_settings_save`），文件写好后才应用到 `Vault`（`finish_settings_save`）。所以保存失败、文件冲突、重新加载时，内存里的密钥始终和磁盘上的文件对得上
+- 改主密钥前核对当前密钥：库有主密码时只认主密码（密钥文件在这台电脑上谁都能拿到，主密码不能），没有主密码时认密钥文件。改完更新 `Meta/MasterKeyChanged`，去掉 `MasterKeyChangeForceOnce`；改加密设置更新 `Meta/SettingsChanged`
+- 加密设置：AES-256、ChaCha20、Twofish；Argon2id、Argon2d（内存 1 MiB–4 GiB，迭代 1–100 000 次，并行度 1–64）、AES-KDF（1 000 轮以上）；gzip 开关。点"应用"才保存，因为每次保存都要重跑一遍 KDF。内存超过 256 MiB 或解锁超过 5 秒时界面提示
+- 改了主密钥之后，`.bak` 仍然只能用旧密钥打开：保存后提示，可以一键删除
+- 改了密钥文件时，最近文件列表里记住的密钥文件路径跟着改（"记住密钥文件"打开时）
 
 ### 剪贴板
 

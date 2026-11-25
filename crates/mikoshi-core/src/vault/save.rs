@@ -188,8 +188,8 @@ impl Vault {
 
 /// A save in progress: a copy of the database as it was when the save began.
 pub struct SaveJob {
-    db: kdbx::Database,
-    key: kdbx::Key,
+    pub(super) db: kdbx::Database,
+    pub(super) key: kdbx::Key,
     path: PathBuf,
     backup: bool,
     edits: u64,

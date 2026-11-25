@@ -91,6 +91,12 @@ pub enum AppError {
     AutotypeFailed,
     #[error("window operation failed")]
     Window,
+    #[error("the current master password or key file is not right")]
+    CurrentKeyWrong,
+    #[error("a key derivation setting is out of range")]
+    KdfInvalid,
+    #[error("the key derivation could not run")]
+    KdfFailed,
     #[error("internal error")]
     Internal,
 }
@@ -133,6 +139,20 @@ impl From<mikoshi_core::vault::SaveError> for AppError {
             S::Conflict => AppError::SaveConflict,
             S::FormatUpgrade => AppError::FormatUpgrade,
             S::Encrypt | S::Write => AppError::SaveFailed,
+        }
+    }
+}
+
+impl From<mikoshi_core::vault::SettingsError> for AppError {
+    fn from(e: mikoshi_core::vault::SettingsError) -> Self {
+        use mikoshi_core::vault::SettingsError as S;
+        match e {
+            S::WrongKey => AppError::CurrentKeyWrong,
+            S::NoKey => AppError::EmptyPassword,
+            S::KeyFileUnreadable => AppError::KeyFileUnreadable,
+            S::Invalid => AppError::KdfInvalid,
+            S::Kdf => AppError::KdfFailed,
+            S::Save(e) => e.into(),
         }
     }
 }

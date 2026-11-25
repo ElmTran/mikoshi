@@ -27,6 +27,9 @@ use crate::search::{Haystack, Query};
 use crate::totp::{self, Totp, TotpError};
 
 mod create;
+mod dbsettings;
+#[cfg(test)]
+mod dbsettings_tests;
 mod edit;
 #[cfg(test)]
 mod edit_tests;
@@ -35,6 +38,10 @@ mod save;
 
 pub use create::{
     CreateError, NEW_KDF_MEMORY, NEW_KDF_TARGET, NewDatabase, calibrated_settings, create_key_file,
+};
+pub use dbsettings::{
+    ARGON2_MEMORY_HEAVY, CipherName, DatabaseSettings, Encryption, KdfName, KeyFileChange,
+    PasswordChange, SettingsChange, SettingsError, calibrate, time_kdf,
 };
 pub use edit::{
     EditError, EditableEntry, EditableField, EntryEdit, FieldEdit, HistoryItem, TotpEdit,

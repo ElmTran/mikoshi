@@ -3,7 +3,7 @@
 //! nodes it is about; untouched parts of the document stay as they were read.
 
 use crate::db::Database;
-use crate::types::Uuid;
+use crate::types::{Timestamp, Uuid};
 use crate::view::{EntryMut, at, at_mut, now_text, set_child_text, uuid_of, uuid_of_text};
 use crate::xml::{Element, Node};
 
@@ -271,6 +271,31 @@ impl Database {
             self.drop_binary_if_unused(r);
         }
         true
+    }
+
+    /// Records a new master key in `Meta`: `MasterKeyChanged` becomes `at`,
+    /// and a pending "change the master key next time" request
+    /// (`MasterKeyChangeForceOnce`, which KeePass only writes when set) is done.
+    pub fn note_master_key_changed(&mut self, at: Timestamp) {
+        let Some(meta) = self.meta_element_mut() else {
+            return;
+        };
+        set_child_text(meta, "MasterKeyChanged", &at.to_base64(), &["Color"]);
+        meta.remove_child("MasterKeyChangeForceOnce");
+    }
+
+    /// Records changed encryption settings in `Meta` (`SettingsChanged`, which
+    /// KeePass uses when merging).
+    pub fn note_settings_changed(&mut self, at: Timestamp) {
+        let Some(meta) = self.meta_element_mut() else {
+            return;
+        };
+        set_child_text(
+            meta,
+            "SettingsChanged",
+            &at.to_base64(),
+            &["HistoryMaxSize"],
+        );
     }
 }
 

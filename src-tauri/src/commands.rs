@@ -9,7 +9,8 @@ use mikoshi_core::model::{CustomIconView, EntryDetail, EntrySummary, GroupView, 
 use mikoshi_core::totp::TotpError;
 use mikoshi_core::vault::Deleted;
 use mikoshi_core::vault::{
-    EditError, EditableEntry, EntryEdit, HistoryItem, SaveError, SaveOptions,
+    DatabaseSettings, EditError, EditableEntry, Encryption, EntryEdit, HistoryItem, KeyFileChange,
+    PasswordChange, SaveError, SaveOptions,
 };
 use mikoshi_core::{Credentials, Secret, Vault};
 use serde::{Deserialize, Serialize};
@@ -1096,6 +1097,164 @@ pub async fn create_database(
         let _ = app.emit("settings-changed", &s);
     }
     announce(&app, &state)
+}
+
+// ---------------------------------------------------------------- database settings
+
+/// The master key and the encryption settings of the open database.
+#[tauri::command]
+pub fn get_database_settings(state: State<'_, AppState>) -> AppResult<DatabaseSettings> {
+    read(&state, |v| Some(v.database_settings()))
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PasswordInput {
+    Keep,
+    Remove,
+    Set { value: Secret },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum KeyFileInput {
+    Keep,
+    Remove,
+    Set { path: String },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyInput {
+    pub password: PasswordInput,
+    pub key_file: KeyFileInput,
+}
+
+/// Changes the master key and/or the encryption settings and saves at once
+/// (with whatever else is unsaved). A new key needs the current one again:
+/// `current_password`, or `current_key_file` for a database without a
+/// password. The vault takes the change only once the file holds it, so a
+/// conflict or a failed save leaves both as they were. A new or removed
+/// key file is remembered for the unlock form as when unlocking.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_database_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    current_password: Option<Secret>,
+    current_key_file: Option<String>,
+    key: Option<KeyInput>,
+    encryption: Option<Encryption>,
+    options: Option<SaveOptions>,
+) -> AppResult<DatabaseSettings> {
+    let mut opts = options.unwrap_or_default();
+    opts.backup = settings(&state)?.current.backup_on_save;
+    let app2 = app.clone();
+    // the key file the unlock form should offer from now on, when it changed
+    let (remembered, path) = tauri::async_runtime::spawn_blocking(move || {
+        let state = tauri::Manager::state::<AppState>(&app2);
+        let _one_at_a_time = state.save_lock.lock().map_err(|_| AppError::Internal)?;
+        let current_kf = current_key_file.filter(|k| !k.trim().is_empty());
+        let (change, job, remembered) = {
+            let s = state.vault.lock().map_err(|_| AppError::Internal)?;
+            let vault = s.open.as_ref().ok_or(AppError::Locked)?;
+            let mut remembered = None;
+            let parts = key.as_ref().map(|k| {
+                let password = match &k.password {
+                    PasswordInput::Keep => PasswordChange::Keep,
+                    PasswordInput::Remove => PasswordChange::Remove,
+                    PasswordInput::Set { value } => PasswordChange::Set(value),
+                };
+                let key_file = match &k.key_file {
+                    KeyFileInput::Keep => KeyFileChange::Keep,
+                    KeyFileInput::Remove => {
+                        remembered = Some(None);
+                        KeyFileChange::Remove
+                    }
+                    KeyFileInput::Set { path } => {
+                        remembered = Some(Some(path.clone()));
+                        KeyFileChange::Set(Path::new(path))
+                    }
+                };
+                (password, key_file)
+            });
+            let change = vault
+                .settings_change(
+                    Credentials {
+                        password: current_password.as_ref(),
+                        key_file: current_kf.as_deref().map(Path::new),
+                    },
+                    parts,
+                    encryption.as_ref(),
+                )
+                .inspect_err(|e| log::info!("database settings not changed: {e:?}"))?;
+            let job = vault
+                .prepare_settings_save(&change, opts)
+                .inspect_err(log_save_error)?;
+            (change, job, remembered)
+        };
+        let path = job.path().to_path_buf();
+        let saved = job.run().inspect_err(log_save_error)?;
+        let mut s = state.vault.lock().map_err(|_| AppError::Internal)?;
+        if let Some(vault) = s.open.as_mut().filter(|v| v.path() == path) {
+            vault.finish_settings_save(saved, &change);
+        }
+        if change.changes_key() {
+            log::info!("master key changed");
+        }
+        if encryption.is_some() {
+            log::info!("encryption settings changed");
+        }
+        Ok::<_, AppError>((remembered, path))
+    })
+    .await
+    .map_err(|_| AppError::Internal)??;
+
+    if let Some(key_file) = remembered {
+        let path = path.to_string_lossy().into_owned();
+        let saved = settings(&state)?.update(|s| s.note_opened(&path, key_file.as_deref()));
+        match saved {
+            Ok(s) => {
+                let _ = app.emit("settings-changed", &s);
+            }
+            Err(e) => log::warn!("recent files not saved: {e}"),
+        }
+    }
+    announce(&app, &state)?;
+    read(&state, |v| Some(v.database_settings()))
+}
+
+/// How long unlocking takes on this computer with `encryption`, in
+/// milliseconds. Runs the KDF once.
+#[tauri::command]
+pub async fn time_kdf(encryption: Encryption) -> AppResult<u64> {
+    let took =
+        tauri::async_runtime::spawn_blocking(move || mikoshi_core::vault::time_kdf(&encryption))
+            .await
+            .map_err(|_| AppError::Internal)??;
+    Ok(took.as_millis().try_into().unwrap_or(u64::MAX))
+}
+
+/// `encryption` with its iterations (rounds) set so unlocking takes about a
+/// second on this computer.
+#[tauri::command]
+pub async fn calibrate_kdf(encryption: Encryption) -> AppResult<Encryption> {
+    let out =
+        tauri::async_runtime::spawn_blocking(move || mikoshi_core::vault::calibrate(&encryption))
+            .await
+            .map_err(|_| AppError::Internal)??;
+    Ok(out)
+}
+
+/// Deletes `NAME.bak` next to the open database (after a key change it still
+/// opens with the old key). `false` when there was none.
+#[tauri::command]
+pub fn remove_backup(state: State<'_, AppState>) -> AppResult<bool> {
+    let removed = read(&state, |v| Some(v.remove_backup()))?.map_err(|_| AppError::WriteFailed)?;
+    if removed {
+        log::info!("backup file deleted");
+    }
+    Ok(removed)
 }
 
 // ---------------------------------------------------------------- quick save

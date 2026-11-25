@@ -31,7 +31,7 @@ mod types;
 mod view;
 pub mod xml;
 
-pub use create::{ARGON2_VERSION, calibrate_argon2id, time_kdf};
+pub use create::{ARGON2_VERSION, calibrate, calibrate_argon2id, time_kdf};
 pub use crypto::Cipher;
 pub use db::{Database, Settings, TIME_ELEMENTS};
 pub use error::{Error, Result};
